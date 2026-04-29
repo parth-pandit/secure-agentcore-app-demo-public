@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentCore Test Chat</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <div>
+          <h1>Order Management Agent</h1>
+          <p>AgentCore Security and Observability Demo</p>
+        </div>
+        <div class="auth-section">
+          <div id="user-info" style="display: none; margin-right: 10px;"></div>
+          <button id="signin" onclick="signIn()" style="display: none;">
+            Sign in
+          </button>
+          <button id="signout" onclick="signOut()" style="display: none;">
+            Sign out
+          </button>
+        </div>
+      </header>
+      <div class="status" id="status">Disconnected</div>
+      
+      <!-- Login prompt message (shown when not logged in) -->
+      <div class="login-prompt" id="login-prompt" style="display: none;">
+        <p>Please sign in to continue.</p>
+      </div>
+      
+      <section class="chat" id="chat"></section>
+
+      <form class="composer" id="composer">
+        <input
+          id="prompt"
+          name="prompt"
+          type="text"
+          placeholder="Ask something..."
+          autocomplete="off"
+          required
+        />
+        <button type="submit">Send</button>
+      </form>
+
+    </main>
+    <!-- Load MSAL first, BEFORE your scripts -->
+    <script src="https://unpkg.com/@azure/msal-browser@latest/lib/msal-browser.min.js"></script>
+    <!-- Load markdown parsing libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.0.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.0/dist/purify.min.js"></script>
+    <!-- Load generated configuration before other scripts -->
+    <script src="config.generated.js"></script>
+    <script src="configAccessor.js"></script>
+    <script src="config.js"></script>
+    <script src="authConfig.js"></script>
+    <script src="auth.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

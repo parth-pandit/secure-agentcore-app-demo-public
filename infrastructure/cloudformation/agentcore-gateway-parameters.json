@@ -1,0 +1,22 @@
+[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "GatewayName",
+    "ParameterValue": "orders-gateway"
+  },
+  {
+    "ParameterKey": "GatewayDescription",
+    "ParameterValue": "AgentCore Gateway for Orders API integration"
+  },
+  {
+    "ParameterKey": "TargetName",
+    "ParameterValue": "orders-api-target"
+  },
+  {
+    "ParameterKey": "TargetDescription",
+    "ParameterValue": "REST API target for order management system"
+  }
+]

@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Frontend Application Configuration",
+  "description": "Configuration schema for the frontend application including authentication, API endpoints, and runtime settings",
+  "type": "object",
+  "required": ["auth", "api", "runtime"],
+  "properties": {
+    "auth": {
+      "type": "object",
+      "description": "Authentication configuration for MSAL (Microsoft Authentication Library)",
+      "required": ["clientId", "authority", "redirectUri", "scopes"],
+      "properties": {
+        "clientId": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "description": "Azure AD application (client) ID in UUID format"
+        },
+        "authority": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "Azure AD authority URL including tenant ID (e.g., https://login.microsoftonline.com/{tenant-id})"
+        },
+        "redirectUri": {
+          "type": "string",
+          "pattern": "^https?://",
+          "description": "OAuth redirect URI - must be registered in Azure AD app registration"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "OAuth scopes to request during authentication"
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "description": "Backend API endpoint configuration",
+      "required": ["agentcoreEndpoint"],
+      "properties": {
+        "agentcoreEndpoint": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "AgentCore REST API endpoint URL"
+        },
+        "wsSignEndpoint": {
+          "type": "string",
+          "description": "WebSocket signing endpoint URL (optional, can be empty string)"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "description": "Application runtime behavior settings",
+      "properties": {
+        "maxAuthRetries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10,
+          "default": 2,
+          "description": "Maximum number of authentication retry attempts"
+        },
+        "cookieExpirationMinutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440,
+          "default": 15,
+          "description": "Cookie expiration time in minutes (1-1440, where 1440 = 24 hours)"
+        }
+      }
+    }
+  }
+}

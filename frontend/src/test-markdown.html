@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown Parser Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .output {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            margin-top: 10px;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        blockquote {
+            border-left: 4px solid #ddd;
+            margin: 0;
+            padding-left: 15px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>Markdown Parser Test Page</h1>
+    <p>This page tests the new markdown parser implementation.</p>
+
+    <div class="test-section">
+        <h3>Test 1: Headers</h3>
+        <div class="output" id="test1"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Test 2: Lists</h3>
+        <div class="output" id="test2"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Test 3: Tables</h3>
+        <div class="output" id="test3"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Test 4: Code and Formatting</h3>
+        <div class="output" id="test4"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Test 5: Blockquotes and HR</h3>
+        <div class="output" id="test5"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Test 6: XSS Prevention</h3>
+        <div class="output" id="test6"></div>
+    </div>
+
+    <!-- Load libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.0.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.0/dist/purify.min.js"></script>
+
+    <script>
+        // Configure marked
+        marked.setOptions({
+            gfm: true,
+            breaks: true,
+            headerIds: false,
+            mangle: false,
+        });
+
+        // renderMarkdown function
+        function renderMarkdown(input) {
+            if (input === null || input === undefined || input === '') {
+                return '';
+            }
+
+            let markdownText;
+            try {
+                markdownText = String(input);
+            } catch (error) {
+                console.error('Error converting input to string:', error);
+                return '';
+            }
+
+            if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+                console.error('marked or DOMPurify not loaded');
+                return markdownText;
+            }
+
+            try {
+                const rawHtml = marked.parse(markdownText);
+                const sanitizedHtml = DOMPurify.sanitize(rawHtml, {
+                    ALLOWED_TAGS: [
+                        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                        'p', 'br', 'strong', 'em', 'del', 's',
+                        'a', 'code', 'pre',
+                        'ul', 'ol', 'li',
+                        'table', 'thead', 'tbody', 'tr', 'th', 'td',
+                        'blockquote', 'hr'
+                    ],
+                    ALLOWED_ATTR: ['href', 'target', 'rel', 'align'],
+                    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i
+                });
+                return sanitizedHtml;
+            } catch (error) {
+                console.error('Error rendering markdown:', error);
+                return markdownText;
+            }
+        }
+
+        // Run tests
+        document.getElementById('test1').innerHTML = renderMarkdown(`# Header 1
+## Header 2
+### Header 3`);
+
+        document.getElementById('test2').innerHTML = renderMarkdown(`- Item 1
+- Item 2
+- Item 3
+
+1. First
+2. Second
+3. Third`);
+
+        document.getElementById('test3').innerHTML = renderMarkdown(`| Name | Age | City |
+|------|-----|------|
+| John | 30  | NYC  |
+| Jane | 25  | LA   |`);
+
+        document.getElementById('test4').innerHTML = renderMarkdown(`**Bold text** and *italic text*
+
+Inline \`code\` example
+
+\`\`\`
+function hello() {
+  console.log("Hello World");
+}
+\`\`\`
+
+~~Strikethrough text~~`);
+
+        document.getElementById('test5').innerHTML = renderMarkdown(`> This is a blockquote
+> It can span multiple lines
+
+---
+
+Horizontal rule above`);
+
+        document.getElementById('test6').innerHTML = renderMarkdown(`<script>alert('XSS')</script>
+
+[Safe Link](https://google.com)
+
+[Unsafe Link](javascript:alert('XSS'))
+
+<img onerror="alert('XSS')" src="invalid">`);
+
+        console.log('All tests rendered successfully!');
+    </script>
+</body>
+</html>

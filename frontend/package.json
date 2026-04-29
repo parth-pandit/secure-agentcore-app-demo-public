@@ -1,0 +1,21 @@
+{
+  "name": "frontend-config",
+  "version": "1.0.0",
+  "description": "Frontend configuration build tools",
+  "scripts": {
+    "build-config": "node build-config.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "ajv": "^8.12.0",
+    "dotenv": "^16.0.3",
+    "marked": "^11.0.0",
+    "dompurify": "^3.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0",
+    "fast-check": "^3.15.0",
+    "jsdom": "^23.0.0"
+  }
+}

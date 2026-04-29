@@ -1,0 +1,104 @@
+q{
+  "ResponseMetadata": {
+    "RequestId": "3a25cbfa-4fbd-47b7-8ba0-91f0bea8cb68",
+    "HTTPStatusCode": 200,
+    "HTTPHeaders": {
+      "date": "Sat, 31 Jan 2026 03:38:31 GMT",
+      "content-type": "application/json",
+      "content-length": "1150",
+      "connection": "keep-alive",
+      "x-amzn-requestid": "3a25cbfa-4fbd-47b7-8ba0-91f0bea8cb68",
+      "x-amzn-remapped-x-amzn-requestid": "88c4517d-3660-4e61-9c1c-f6a851123afe",
+      "x-amzn-remapped-content-length": "1150",
+      "x-amzn-remapped-connection": "keep-alive",
+      "x-amz-apigw-id": "YB_guHLZvHcEQDA=",
+      "x-amzn-trace-id": "Root=1-697d7937-4d34862f6cace0564d828401",
+      "x-amzn-remapped-date": "Sat, 31 Jan 2026 03:38:31 GMT"
+    },
+    "RetryAttempts": 0
+  },
+  "gatewayArn": "arn:aws:bedrock-agentcore:us-west-2:YOUR_ACCOUNT_ID:gateway/gateway-authcode-20260121-152301-agcq9jti7p",
+  "gatewayId": "gateway-authcode-20260121-152301-agcq9jti7p",
+  "gatewayUrl": "https://gateway-authcode-20260121-152301-agcq9jti7p.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp",
+  "createdAt": "2026-01-21 21:23:02.822102+00:00",
+  "updatedAt": "2026-01-23 22:00:17.380798+00:00",
+  "status": "READY",
+  "name": "gateway-authcode-20260121-152301",
+  "roleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/BedrockAgentCoreGatewayRole-20260121-152301",
+  "protocolType": "MCP",
+  "protocolConfiguration": {
+    "mcp": {
+      "supportedVersions": [
+        "2025-11-25",
+        "2025-03-26"
+      ],
+      "searchType": "SEMANTIC"
+    }
+  },
+  "authorizerType": "CUSTOM_JWT",
+  "authorizerConfiguration": {
+    "customJWTAuthorizer": {
+      "discoveryUrl": "https://login.microsoftonline.com/d96b138a-fa21-4e19-a6cd-031770526997/v2.0/.well-known/openid-configuration",
+      "allowedAudience": [
+        "f8595cc5-9f3a-4459-81d7-abd0c3d67b1a"
+      ]
+    }
+  },
+  "workloadIdentityDetails": {
+    "workloadIdentityArn": "arn:aws:bedrock-agentcore:us-west-2:YOUR_ACCOUNT_ID:workload-identity-directory/default/workload-identity/gateway-authcode-20260121-152301-agcq9jti7p"
+  },
+  "exceptionLevel": "DEBUG",
+  "targets": [
+    {
+      "ResponseMetadata": {
+        "RequestId": "dea691a5-9e54-46dc-8997-a67b6f799b43",
+        "HTTPStatusCode": 200,
+        "HTTPHeaders": {
+          "date": "Sat, 31 Jan 2026 03:38:31 GMT",
+          "content-type": "application/json",
+          "content-length": "912",
+          "connection": "keep-alive",
+          "x-amzn-requestid": "dea691a5-9e54-46dc-8997-a67b6f799b43",
+          "x-amzn-remapped-x-amzn-requestid": "233ca831-8c9d-44c6-b7c2-8ff569fb084f",
+          "x-amzn-remapped-content-length": "912",
+          "x-amzn-remapped-connection": "keep-alive",
+          "x-amz-apigw-id": "YB_gxEStPHcEaqg=",
+          "x-amzn-trace-id": "Root=1-697d7937-4be72eaf3935c5dc3b292806",
+          "x-amzn-remapped-date": "Sat, 31 Jan 2026 03:38:31 GMT"
+        },
+        "RetryAttempts": 0
+      },
+      "gatewayArn": "arn:aws:bedrock-agentcore:us-west-2:YOUR_ACCOUNT_ID:gateway/gateway-authcode-20260121-152301-agcq9jti7p",
+      "targetId": "T2AJMK3VHE",
+      "createdAt": "2026-01-31 02:36:36.926947+00:00",
+      "updatedAt": "2026-01-31 02:36:36.926982+00:00",
+      "status": "READY",
+      "name": "OrderApiAuthCode",
+      "description": "Target created for testing",
+      "targetConfiguration": {
+        "mcp": {
+          "openApiSchema": {
+            "s3": {
+              "uri": "s3://YOUR_S3_BUCKET_NAME/api-docs/orders-api-openapi-3.0.yaml"
+            }
+          }
+        }
+      },
+      "credentialProviderConfigurations": [
+        {
+          "credentialProviderType": "OAUTH",
+          "credentialProvider": {
+            "oauthCredentialProvider": {
+              "providerArn": "arn:aws:bedrock-agentcore:us-west-2:YOUR_ACCOUNT_ID:token-vault/default/oauth2credentialprovider/ac-gateway-mcp-server-identity-authcode-20260121-152301",
+              "scopes": [
+                "be319193-c757-40ac-9d62-4a704fb28695/.default"
+              ],
+              "grantType": "AUTHORIZATION_CODE",
+              "defaultReturnUrl": "https://YOUR_API_GATEWAY_ID.execute-api.us-west-2.amazonaws.com/oauth2/callback"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+fastpath
+uvicorn
+requests
+fastapi
+bedrock_agentcore
+boto3

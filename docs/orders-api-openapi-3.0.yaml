@@ -1,0 +1,417 @@
+openapi: 3.0.3
+info:
+  title: Orders API
+  description: |
+    REST API for order management with Azure Entra ID authentication.
+    
+    This API provides endpoints to create, retrieve, and update orders stored in DynamoDB.
+    All endpoints require authentication via Azure Entra ID bearer tokens.
+  version: 1.0.0
+  contact:
+    name: API Support
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://{apiId}.execute-api.{region}.amazonaws.com/{environment}
+    description: AWS API Gateway endpoint
+    variables:
+      apiId:
+        default: 2u8i08vno4
+        description: API Gateway REST API ID
+      region:
+        default: us-west-2
+        description: AWS Region
+        enum:
+          - us-east-1
+          - us-west-2
+          - eu-west-1
+          - ap-southeast-1
+      environment:
+        default: dev
+        description: Deployment environment
+        enum:
+          - dev
+          - staging
+          - prod
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Orders
+    description: Order management operations
+
+paths:
+  /orders:
+    get:
+      tags:
+        - Orders
+      summary: Get all orders
+      description: Retrieves all orders from the database. Returns a list of all order records with their complete details.
+      operationId: getOrders
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Orders retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetOrdersResponse'
+              examples:
+                success:
+                  summary: Successful response with orders
+                  value:
+                    message: Orders retrieved successfully
+                    count: 2
+                    orders:
+                      - order_id: ORD-12345
+                        order_date: '2025-12-27'
+                        item_name: Laptop
+                        qty: 2
+                        status: pending
+                      - order_id: ORD-12346
+                        order_date: '2025-12-28'
+                        item_name: Mouse
+                        qty: 5
+                        status: completed
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      tags:
+        - Orders
+      summary: Create a new order
+      description: Creates a new order record in the database with the provided details.
+      operationId: createOrder
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+            examples:
+              newOrder:
+                summary: Create a new order
+                value:
+                  order_id: ORD-12347
+                  order_date: '2025-12-29'
+                  item_name: Keyboard
+                  qty: 3
+                  status: pending
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateOrderResponse'
+              examples:
+                success:
+                  summary: Successful order creation
+                  value:
+                    message: Order created successfully
+                    order:
+                      order_id: ORD-12347
+                      order_date: '2025-12-29'
+                      item_name: Keyboard
+                      qty: 3
+                      status: pending
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      tags:
+        - Orders
+      summary: Update an existing order
+      description: Updates an existing order identified by order_id. Only provided fields will be updated.
+      operationId: updateOrder
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrderRequest'
+            examples:
+              updateStatus:
+                summary: Update order status
+                value:
+                  order_id: ORD-12345
+                  status: completed
+              updateMultipleFields:
+                summary: Update multiple fields
+                value:
+                  order_id: ORD-12345
+                  qty: 5
+                  status: shipped
+      responses:
+        '200':
+          description: Order updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateOrderResponse'
+              examples:
+                success:
+                  summary: Successful order update
+                  value:
+                    message: Order updated successfully
+                    order:
+                      order_id: ORD-12345
+                      order_date: '2025-12-27'
+                      item_name: Laptop
+                      qty: 5
+                      status: shipped
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Azure Entra ID JWT token. Include the token in the Authorization header as: `Bearer <token>`
+        
+        The token must be issued by Azure Entra ID and contain the required audience and issuer claims.
+
+  schemas:
+    Order:
+      type: object
+      required:
+        - order_id
+        - order_date
+        - item_name
+        - qty
+        - status
+      properties:
+        order_id:
+          type: string
+          description: Unique identifier for the order
+          example: ORD-12345
+        order_date:
+          type: string
+          format: date
+          description: Date when the order was placed
+          example: '2025-12-27'
+        item_name:
+          type: string
+          description: Name of the ordered item
+          example: Laptop
+        qty:
+          type: integer
+          minimum: 1
+          description: Quantity of items ordered
+          example: 2
+        status:
+          type: string
+          description: Current status of the order
+          enum:
+            - pending
+            - processing
+            - shipped
+            - completed
+            - cancelled
+          example: pending
+
+    CreateOrderRequest:
+      allOf:
+        - $ref: '#/components/schemas/Order'
+      description: Request body for creating a new order
+
+    UpdateOrderRequest:
+      type: object
+      required:
+        - order_id
+      properties:
+        order_id:
+          type: string
+          description: Unique identifier for the order to update
+          example: ORD-12345
+        order_date:
+          type: string
+          format: date
+          description: Updated order date (optional)
+          example: '2025-12-28'
+        item_name:
+          type: string
+          description: Updated item name (optional)
+          example: Updated Laptop
+        qty:
+          type: integer
+          minimum: 1
+          description: Updated quantity (optional)
+          example: 5
+        status:
+          type: string
+          description: Updated order status (optional)
+          enum:
+            - pending
+            - processing
+            - shipped
+            - completed
+            - cancelled
+          example: completed
+      description: Request body for updating an order. Only order_id is required; other fields are optional.
+
+    GetOrdersResponse:
+      type: object
+      required:
+        - message
+        - count
+        - orders
+      properties:
+        message:
+          type: string
+          example: Orders retrieved successfully
+        count:
+          type: integer
+          description: Total number of orders returned
+          example: 2
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+
+    CreateOrderResponse:
+      type: object
+      required:
+        - message
+        - order
+      properties:
+        message:
+          type: string
+          example: Order created successfully
+        order:
+          $ref: '#/components/schemas/Order'
+
+    UpdateOrderResponse:
+      type: object
+      required:
+        - message
+        - order
+      properties:
+        message:
+          type: string
+          example: Order updated successfully
+        order:
+          $ref: '#/components/schemas/Order'
+
+    ErrorResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: Error message describing what went wrong
+          example: An error occurred
+        error:
+          type: string
+          description: Detailed error information (optional)
+          example: Detailed error message
+        missing_fields:
+          type: array
+          items:
+            type: string
+          description: List of missing required fields (for validation errors)
+          example:
+            - order_id
+            - item_name
+
+  responses:
+    BadRequestError:
+      description: Bad request - Invalid input or missing required fields
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missingFields:
+              summary: Missing required fields
+              value:
+                message: Missing required fields
+                missing_fields:
+                  - order_id
+                  - item_name
+            invalidJson:
+              summary: Invalid JSON
+              value:
+                message: Invalid JSON in request body
+            noFieldsToUpdate:
+              summary: No fields to update
+              value:
+                message: No fields provided to update
+
+    UnauthorizedError:
+      description: Unauthorized - Missing or invalid authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            unauthorized:
+              summary: Authentication failed
+              value:
+                message: Unauthorized
+
+    ForbiddenError:
+      description: Forbidden - Valid token but insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            forbidden:
+              summary: Insufficient permissions
+              value:
+                message: Forbidden
+
+    NotFoundError:
+      description: Not found - The requested order does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            orderNotFound:
+              summary: Order not found
+              value:
+                message: Order with order_id ORD-99999 not found
+
+    InternalServerError:
+      description: Internal server error - An unexpected error occurred
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            serverError:
+              summary: Internal server error
+              value:
+                message: Failed to retrieve orders
+                error: Internal server error details

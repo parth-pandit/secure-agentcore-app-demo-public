@@ -1,0 +1,292 @@
+:root {
+  --bg: #0f172a;
+  --panel: #111827;
+  --muted: #94a3b8;
+  --text: #e2e8f0;
+  --accent: #22d3ee;
+  --accent-2: #38bdf8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at top left, #1e293b, #0f172a 45%, #0b1120 100%);
+  color: var(--text);
+  font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.app {
+  width: min(900px, 100%);
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 20px;
+  padding: 24px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 20px 60px rgba(2, 6, 23, 0.5);
+  display: grid;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.header h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+  letter-spacing: 0.4px;
+}
+
+.header p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.status {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat {
+  min-height: 360px;
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 6px;
+}
+
+.message {
+  padding: 12px 14px;
+  border-radius: 14px;
+  line-height: 1.4;
+  background: rgba(148, 163, 184, 0.15);
+  max-width: 80%;
+}
+
+.message.user {
+  align-self: flex-end;
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.3), rgba(56, 189, 248, 0.2));
+}
+
+.message.agent {
+  align-self: flex-start;
+  background: rgba(30, 41, 59, 0.6);
+}
+
+.message.pending {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.message pre {
+  margin: 10px 0;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.9);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+
+.message code {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.message a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.auth-button {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #0b1120;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-link {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.composer {
+  display: flex;
+  gap: 12px;
+}
+
+.composer input {
+  flex: 1;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: #0b1120;
+  color: var(--text);
+}
+
+.composer button {
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #0b1120;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.footer {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.auth-section button {
+  padding: 8px 16px;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #0b1120;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.auth-section button:hover {
+  opacity: 0.9;
+}
+
+#user-info {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--accent);
+}
+
+code {
+  color: var(--accent);
+}
+
+.login-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 360px;
+  max-height: 360px;
+  background: rgba(30, 41, 59, 0.4);
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  text-align: center;
+  width: 100%;
+}
+
+.login-prompt p {
+  font-size: 18px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 600;
+  margin: 0;
+  padding: 0;
+  line-height: 1;
+}
+
+/* Markdown table styling */
+.message table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10px 0;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.message th,
+.message td {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.message th {
+  background: rgba(30, 41, 59, 0.8);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.message tr:hover {
+  background: rgba(30, 41, 59, 0.4);
+}
+
+/* Markdown blockquote styling */
+.message blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 10px 0;
+  padding-left: 15px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Markdown horizontal rule styling */
+.message hr {
+  border: none;
+  border-top: 1px solid rgba(148, 163, 184, 0.3);
+  margin: 16px 0;
+}
+
+/* Markdown list styling */
+.message ul,
+.message ol {
+  margin: 10px 0;
+  padding-left: 24px;
+}
+
+.message li {
+  margin: 4px 0;
+}
+
+/* Markdown heading styling */
+.message h1,
+.message h2,
+.message h3,
+.message h4,
+.message h5,
+.message h6 {
+  margin: 16px 0 8px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.message h1 { font-size: 1.8em; }
+.message h2 { font-size: 1.5em; }
+.message h3 { font-size: 1.3em; }
+.message h4 { font-size: 1.1em; }
+.message h5 { font-size: 1em; }
+.message h6 { font-size: 0.9em; }
+
+/* Markdown paragraph spacing */
+.message p {
+  margin: 8px 0;
+}
+
+/* Strikethrough styling */
+.message del,
+.message s {
+  opacity: 0.7;
+}

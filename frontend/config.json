@@ -1,0 +1,16 @@
+{
+  "auth": {
+    "clientId": "${MSAL_CLIENT_ID}",
+    "authority": "${MSAL_AUTHORITY}",
+    "redirectUri": "${REDIRECT_URI}",
+    "scopes": ["${MSAL_CLIENT_ID}/.default"]
+  },
+  "api": {
+    "agentcoreEndpoint": "${AGENTCORE_ENDPOINT}",
+    "wsSignEndpoint": "${WS_SIGN_ENDPOINT}"
+  },
+  "runtime": {
+    "maxAuthRetries": 2,
+    "cookieExpirationMinutes": 15
+  }
+}
