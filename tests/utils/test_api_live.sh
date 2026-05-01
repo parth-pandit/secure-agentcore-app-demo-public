@@ -134,7 +134,7 @@ fi
 # For testing unauthorized access, we'll use an invalid token
 # In a real scenario, you'd need a token from a different user without permissions
 UNAUTHORIZED_TOKEN="invalid-token-for-unauthorized-test"
-EXPIRED_TOKEN="***REMOVED-FROM-HISTORY***"
+EXPIRED_TOKEN="dummy.token.value"
 
 echo -e "${GREEN}✓ Tokens ready for testing${NC}"
 echo ""
