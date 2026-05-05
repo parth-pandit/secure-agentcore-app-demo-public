@@ -126,7 +126,7 @@ package_backend_lambda() {
     # Create zip file with all contents at root level
     # Lambda expects handler file and dependencies at package root
     cd "$temp_dir"
-    zip -q -r "$PACKAGES_DIR/$package_name" . -x "*.pyc" -x "__pycache__/*" -x "*.dist-info/*"
+    zip -q -r "$PACKAGES_DIR/$package_name" . -x "*.pyc" -x "__pycache__/*"
     cd - > /dev/null
     
     # Get package size for reporting
@@ -178,7 +178,7 @@ package_ai_agent_lambda() {
     
     # Create zip file with all contents at root level
     cd "$temp_dir"
-    zip -q -r "$PACKAGES_DIR/$package_name" . -x "*.pyc" -x "__pycache__/*" -x "*.dist-info/*"
+    zip -q -r "$PACKAGES_DIR/$package_name" . -x "*.pyc" -x "__pycache__/*"
     cd - > /dev/null
     
     # Get package size for reporting
@@ -224,7 +224,7 @@ package_agentcore_runtime() {
     
     # Create zip file
     cd "$temp_dir"
-    zip -q -r "$PACKAGES_DIR/$package_name" . -x "*.pyc" -x "__pycache__/*" -x "*.dist-info/*"
+    zip -q -r "$PACKAGES_DIR/$package_name" . -x "*.pyc" -x "__pycache__/*"
     cd - > /dev/null
     
     # Get package size for reporting
