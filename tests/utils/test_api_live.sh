@@ -37,12 +37,8 @@ aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE UPDATE_COMP
   --output table
 
 echo ""
-read -p "Enter your stack name (e.g., secure-agentcore-app): " STACK_NAME
-
-if [ -z "$STACK_NAME" ]; then
-    echo -e "${RED}Error: Stack name is required${NC}"
-    exit 1
-fi
+read -p "Enter your stack name [secure-agentcore-app]: " STACK_NAME
+STACK_NAME="${STACK_NAME:-secure-agentcore-app}"
 
 # Get API URL
 API_URL=$(aws cloudformation describe-stacks \

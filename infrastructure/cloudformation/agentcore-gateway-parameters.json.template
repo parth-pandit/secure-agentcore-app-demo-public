@@ -1,0 +1,27 @@
+[
+  {
+    "_comment": "Deployment environment name — used as a prefix for all AgentCore Gateway resource names. Allowed: dev | staging | prod",
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "_comment": "Logical name for the AgentCore Gateway resource — used in resource naming and tagging. e.g. orders-gateway",
+    "ParameterKey": "GatewayName",
+    "ParameterValue": "orders-gateway"
+  },
+  {
+    "_comment": "Human-readable description of this gateway's purpose — shown in the AWS console and used for documentation.",
+    "ParameterKey": "GatewayDescription",
+    "ParameterValue": "AgentCore Gateway for Orders API integration"
+  },
+  {
+    "_comment": "Logical name for the gateway target (the downstream API or service this gateway routes to). e.g. orders-api-target",
+    "ParameterKey": "TargetName",
+    "ParameterValue": "orders-api-target"
+  },
+  {
+    "_comment": "Human-readable description of the target endpoint — clarifies what backend system this target connects to.",
+    "ParameterKey": "TargetDescription",
+    "ParameterValue": "REST API target for order management system"
+  }
+]

@@ -1,0 +1,92 @@
+[
+  {
+    "_comment": "Deployment environment name — used as a prefix for all resource names. Allowed: dev | staging | prod",
+    "ParameterKey": "Environment",
+    "ParameterValue": "prod"
+  },
+  {
+    "_comment": "S3 bucket NAME (not ARN, not URL) that stores nested CloudFormation templates uploaded via deploy scripts. e.g. my-project-cfn-templates",
+    "ParameterKey": "TemplatesBucket",
+    "ParameterValue": "REPLACE_WITH_YOUR_TEMPLATES_BUCKET"
+  },
+  {
+    "_comment": "S3 bucket NAME (not ARN, not URL) that stores Lambda deployment ZIP packages. e.g. my-project-lambda-code",
+    "ParameterKey": "LambdaCodeBucket",
+    "ParameterValue": "REPLACE_WITH_YOUR_LAMBDA_CODE_BUCKET"
+  },
+  {
+    "_comment": "Full HTTPS URL to the Azure Entra ID OpenID Connect discovery document — used by the authorizer to fetch signing keys and validate tokens.",
+    "ParameterKey": "IdpDiscoveryUrl",
+    "ParameterValue": "https://login.microsoftonline.com/REPLACE_WITH_TENANT_ID/v2.0/.well-known/openid-configuration"
+  },
+  {
+    "_comment": "Azure App Registration Client ID (UUID) for the AgentCore Gateway application — identifies the gateway when authenticating with the IdP.",
+    "ParameterKey": "GatewayIdpClientId",
+    "ParameterValue": "REPLACE_WITH_GATEWAY_CLIENT_ID"
+  },
+  {
+    "_comment": "Azure App Registration Client ID (UUID) for the AI Agent application — identifies the agent when authenticating with the IdP.",
+    "ParameterKey": "AgentIdpClientId",
+    "ParameterValue": "REPLACE_WITH_AGENT_CLIENT_ID"
+  },
+  {
+    "_comment": "Azure App Registration Client ID (UUID) for the downstream target API — used when exchanging tokens for the target service.",
+    "ParameterKey": "TargetIdpClientId",
+    "ParameterValue": "REPLACE_WITH_TARGET_CLIENT_ID"
+  },
+  {
+    "_comment": "Azure App Registration Client Secret for the target API — store in AWS Secrets Manager in production; never commit the real value.",
+    "ParameterKey": "TargetIdpClientSecret",
+    "ParameterValue": "REPLACE_WITH_TARGET_CLIENT_SECRET"
+  },
+  {
+    "_comment": "Azure Entra ID Tenant ID (UUID) — the directory ID found in Azure Portal > Azure Active Directory > Overview.",
+    "ParameterKey": "TargetIdpTenantId",
+    "ParameterValue": "REPLACE_WITH_TENANT_ID"
+  },
+  {
+    "_comment": "Full HTTPS URL to the Azure Entra ID JWKS endpoint — used by the Lambda authorizer to fetch public keys for JWT signature verification.",
+    "ParameterKey": "JwksUrl",
+    "ParameterValue": "https://login.microsoftonline.com/REPLACE_WITH_TENANT_ID/discovery/v2.0/keys"
+  },
+  {
+    "_comment": "Expected JWT 'iss' (issuer) claim value — must match the issuer in tokens issued by your Azure Entra ID tenant.",
+    "ParameterKey": "TokenIssuer",
+    "ParameterValue": "https://login.microsoftonline.com/REPLACE_WITH_TENANT_ID/v2.0"
+  },
+  {
+    "_comment": "Expected JWT 'aud' (audience) claim — the Azure Application (Client) ID of the Orders API app registration.",
+    "ParameterKey": "TokenAudience",
+    "ParameterValue": "REPLACE_WITH_APPLICATION_ID"
+  },
+  {
+    "_comment": "JSON string mapping authorized user identities to their permissions. Use '{}' to allow all authenticated users, or '{\"user@example.com\": [\"read\", \"write\"]}' to restrict access.",
+    "ParameterKey": "AuthorizedUsers",
+    "ParameterValue": "{}"
+  },
+  {
+    "_comment": "Amazon Bedrock model ID to use for AI inference — format: <region-prefix>.<provider>.<model-name>. Find available IDs in the Bedrock console under 'Model catalog'.",
+    "ParameterKey": "BedrockModelId",
+    "ParameterValue": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  },
+  {
+    "_comment": "Lambda function log verbosity level — use DEBUG for dev (verbose), INFO for staging/prod. Allowed: DEBUG | INFO | WARNING | ERROR | CRITICAL",
+    "ParameterKey": "LogLevel",
+    "ParameterValue": "INFO"
+  },
+  {
+    "_comment": "CloudFront edge location pricing tier — PriceClass_All = all edge locations globally (most expensive, required for prod). Options: PriceClass_100 | PriceClass_200 | PriceClass_All",
+    "ParameterKey": "CloudFrontPriceClass",
+    "ParameterValue": "PriceClass_All"
+  },
+  {
+    "_comment": "ACM Certificate ARN (not URL, not name) for HTTPS on CloudFront — MUST be in us-east-1 regardless of deployment region. Leave empty to use the default CloudFront certificate. Format: arn:aws:acm:us-east-1:<account-id>:certificate/<uuid>",
+    "ParameterKey": "SslCertificateArn",
+    "ParameterValue": "arn:aws:acm:us-east-1:123456789012:certificate/REPLACE_WITH_CERTIFICATE_ID"
+  },
+  {
+    "_comment": "SNS Topic ARN (not name, not URL) for deployment or alarm notifications. Leave empty to disable notifications. Format: arn:aws:sns:<region>:<account-id>:<topic-name>",
+    "ParameterKey": "SnsTopicArn",
+    "ParameterValue": "arn:aws:sns:us-west-2:123456789012:REPLACE_WITH_TOPIC_NAME"
+  }
+]
