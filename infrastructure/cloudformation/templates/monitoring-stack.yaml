@@ -29,6 +29,11 @@ Parameters:
     Description: Optional SNS topic ARN for alarm notifications
     Default: ''
 
+  DeploymentSuffix:
+    Type: String
+    Default: ''
+    Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
+
 # ==============================================================================
 # CONDITIONS
 # ==============================================================================
@@ -46,7 +51,7 @@ Resources:
   OrdersApiDashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
-      DashboardName: !Sub '${Environment}-orders-api-dashboard'
+      DashboardName: !Sub '${Environment}-orders-api-dashboard-${DeploymentSuffix}'
       DashboardBody: !Sub |
         {
           "widgets": [
@@ -214,7 +219,7 @@ Resources:
   AuthenticationFailureMetricFilter:
     Type: AWS::Logs::MetricFilter
     Properties:
-      FilterName: !Sub '${Environment}-auth-failures'
+      FilterName: !Sub '${Environment}-auth-failures-${DeploymentSuffix}'
       FilterPattern: '[timestamp, request_id, level, msg="Authentication failed*"]'
       LogGroupName: !Sub '/aws/lambda/${AuthorizerFunctionName}'
       MetricTransformations:
@@ -229,7 +234,7 @@ Resources:
   AuthorizationErrorMetricFilter:
     Type: AWS::Logs::MetricFilter
     Properties:
-      FilterName: !Sub '${Environment}-auth-errors'
+      FilterName: !Sub '${Environment}-auth-errors-${DeploymentSuffix}'
       FilterPattern: '[timestamp, request_id, level=ERROR, msg="Authorization error*"]'
       LogGroupName: !Sub '/aws/lambda/${AuthorizerFunctionName}'
       MetricTransformations:
@@ -244,7 +249,7 @@ Resources:
   AuthorizationDenialMetricFilter:
     Type: AWS::Logs::MetricFilter
     Properties:
-      FilterName: !Sub '${Environment}-auth-denials'
+      FilterName: !Sub '${Environment}-auth-denials-${DeploymentSuffix}'
       FilterPattern: '[timestamp, request_id, level, msg="Authorization: Deny*"]'
       LogGroupName: !Sub '/aws/lambda/${AuthorizerFunctionName}'
       MetricTransformations:
@@ -264,7 +269,7 @@ Resources:
   HighAuthenticationFailuresAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub '${Environment}-high-auth-failures'
+      AlarmName: !Sub '${Environment}-high-auth-failures-${DeploymentSuffix}'
       AlarmDescription: 'High number of authentication failures detected (>10 in 5 minutes)'
       MetricName: AuthenticationFailures
       Namespace: !Sub '${Environment}/OrdersAPI'
@@ -283,7 +288,7 @@ Resources:
   AuthorizationErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub '${Environment}-authorization-errors'
+      AlarmName: !Sub '${Environment}-authorization-errors-${DeploymentSuffix}'
       AlarmDescription: 'Authorization processing errors detected (>5 in 5 minutes)'
       MetricName: AuthorizationErrors
       Namespace: !Sub '${Environment}/OrdersAPI'
@@ -302,7 +307,7 @@ Resources:
   LambdaErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub '${Environment}-lambda-authorizer-errors'
+      AlarmName: !Sub '${Environment}-lambda-authorizer-errors-${DeploymentSuffix}'
       AlarmDescription: 'Lambda authorizer errors detected (>5 in 5 minutes)'
       MetricName: Errors
       Namespace: AWS/Lambda
@@ -324,7 +329,7 @@ Resources:
   UnusualAccessPatternsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub '${Environment}-unusual-access-patterns'
+      AlarmName: !Sub '${Environment}-unusual-access-patterns-${DeploymentSuffix}'
       AlarmDescription: 'Unusual access patterns detected (>20 denials in 10 minutes)'
       MetricName: AuthorizationDenials
       Namespace: !Sub '${Environment}/OrdersAPI'
@@ -343,7 +348,7 @@ Resources:
   LambdaThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub '${Environment}-lambda-authorizer-throttles'
+      AlarmName: !Sub '${Environment}-lambda-authorizer-throttles-${DeploymentSuffix}'
       AlarmDescription: 'Lambda authorizer throttles detected (>1 in 5 minutes)'
       MetricName: Throttles
       Namespace: AWS/Lambda

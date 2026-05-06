@@ -33,6 +33,11 @@ Parameters:
     Description: Optional ACM certificate ARN for custom domain (must be in us-east-1 for CloudFront)
     Default: ''
 
+  DeploymentSuffix:
+    Type: String
+    Default: ''
+    Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
+
 # ============================================================================
 # CONDITIONS
 # ============================================================================
@@ -56,7 +61,7 @@ Resources:
       # Use provided name or auto-generate with stack name prefix
       BucketName: !If
         - AutoGenerateBucketName
-        - !Sub '${AWS::StackName}-frontend-${AWS::AccountId}'
+        - !Sub '${AWS::StackName}-frontend-${AWS::AccountId}-${DeploymentSuffix}'
         - !Ref BucketName
       
       # Enable versioning for rollback capability
@@ -104,7 +109,7 @@ Resources:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:
-        Name: !Sub '${AWS::StackName}-oac'
+        Name: !Sub '${Environment}-frontend-oac-${DeploymentSuffix}'
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4

@@ -74,16 +74,21 @@ Parameters:
     Description: CORS Allow-Origin header value for Agent Proxy Lambda
     Default: '*'
 
+  DeploymentSuffix:
+    Type: String
+    Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
+    Default: ''
+
 # ============================================================================
 # RESOURCES
 # Resource creation order (respecting dependencies):
 #   1. IAM Roles (no dependencies)
-#   2. OAuthCallbackLambda + FunctionUrl  ← must exist before AgentCoreRuntime
-#   3. AgentCoreGateway                   ← must exist before AgentCoreRuntime
-#   4. OAuth2CredentialProvider           ← must exist before GatewayTarget
-#   5. GatewayTarget                      ← must exist before AgentCoreRuntime
-#   6. AgentCoreRuntime                   ← references Gateway URL + Callback URL
-#   7. RuntimeEndpoint                    ← depends on AgentCoreRuntime
+#   2. OAuthCallbackTable (DynamoDB) ← referenced by OAuthCallbackLambdaRole
+#   3. OAuthCallbackLambda + API Gateway routes ← must exist before AgentCoreRuntime
+#   4. AgentCoreGateway                   ← must exist before AgentCoreRuntime
+#   5. OAuth2CredentialProvider           ← must exist before GatewayTarget
+#   6. GatewayTarget                      ← must exist before AgentCoreRuntime
+#   7. AgentCoreRuntime                   ← references Gateway URL + Callback URL
 #   8. AgentProxyLambda + FunctionUrl     ← depends on AgentCoreRuntime ARN
 # ============================================================================
 Resources:
@@ -95,7 +100,7 @@ Resources:
   GatewayRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-agentcore-gateway-role'
+      RoleName: !Sub '${Environment}-agentcore-gateway-role-${DeploymentSuffix}'
       Description: IAM role for AgentCore Gateway
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -117,7 +122,7 @@ Resources:
   RuntimeRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-agentcore-runtime-role'
+      RoleName: !Sub '${Environment}-agentcore-runtime-role-${DeploymentSuffix}'
       Description: IAM role for AgentCore Runtime with least-privilege permissions
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -135,18 +140,68 @@ Resources:
                 Action:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
-                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+                Resource:
+                  - !Sub 'arn:aws:bedrock:*::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:*:*:inference-profile/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:*'
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogStreams
+                  - logs:CreateLogGroup
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*'
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*'
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: '*'
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: '*'
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                  - logs:DescribeLogStreams
-                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/*'
+                  - logs:PutDeliverySource
+                  - logs:PutDeliveryDestination
+                  - logs:CreateDelivery
+                  - logs:GetDeliverySource
+                  - logs:DeleteDeliverySource
+                  - logs:DeleteDeliveryDestination
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetResourceOauth2Token
+                Resource:
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default'
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/oauth2credentialprovider/*'
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default'
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/*'
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateWorkloadIdentity
+                  - bedrock-agentcore:GetWorkloadAccessTokenForUserId
+                Resource:
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default'
+                  - !Sub 'arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/*'
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
-                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*'
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:bedrock-agentcore-identity!default/oauth2/*'
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${Environment}-gateway-secret*'
+              - Effect: Allow
+                Action: sts:GetWebIdentityToken
+                Resource: '*'
               - Effect: Allow
                 Action:
                   - s3:GetObject
@@ -165,7 +220,7 @@ Resources:
   OAuthCallbackLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-oauth-callback-lambda-role'
+      RoleName: !Sub '${Environment}-oauth-cb-lambda-role-${DeploymentSuffix}'
       Description: Execution role for OAuth Callback Lambda function
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -176,6 +231,24 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: OAuthCallbackPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                Resource: !GetAtt OAuthCallbackTable.Arn
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CompleteResourceTokenAuth
+                  - bedrock-agentcore:GetResourceTokenAuthSession
+                Resource: '*'
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: '*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -186,13 +259,12 @@ Resources:
 
   # --------------------------------------------------------------------------
   # OAUTH CALLBACK LAMBDA — must be created before AgentCoreRuntime
-  # because AgentCoreRuntime references OAuthCallbackFunctionUrl.FunctionUrl
   # --------------------------------------------------------------------------
 
   OAuthCallbackLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${Environment}-oauth-callback'
+      FunctionName: !Sub '${Environment}-oauth-callback-${DeploymentSuffix}'
       Description: OAuth2 callback handler for AgentCore Gateway authentication
       Runtime: python3.12
       Handler: oauth2_callback_server.handler
@@ -204,6 +276,7 @@ Resources:
         Variables:
           ENVIRONMENT: !Ref Environment
           LOG_LEVEL: !Ref LogLevel
+          OAUTH_CALLBACK_TABLE: !Sub 'agentcore-oauth-cb-${DeploymentSuffix}'
       Timeout: 30
       MemorySize: 256
       Tags:
@@ -247,13 +320,37 @@ Resources:
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${AgentProxyApi}/*'
 
   # --------------------------------------------------------------------------
+  # DYNAMODB TABLE FOR OAUTH CALLBACK TOKEN STORAGE
+  # Used by oauth2_callback_server.py to temporarily store user tokens
+  # during the 3-legged OAuth flow.
+  # --------------------------------------------------------------------------
+  OAuthCallbackTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'agentcore-oauth-cb-${DeploymentSuffix}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: AgentApp
+
+  # --------------------------------------------------------------------------
   # AGENTCORE GATEWAY
   # --------------------------------------------------------------------------
 
   AgentCoreGateway:
     Type: AWS::BedrockAgentCore::Gateway
     Properties:
-      Name: !Sub '${Environment}-orders-gateway'
+      Name: !Sub '${Environment}-orders-gateway-${DeploymentSuffix}'
       Description: AgentCore Gateway for Orders API with MCP protocol and JWT authentication
       ProtocolType: MCP
       RoleArn: !GetAtt GatewayRole.Arn
@@ -283,7 +380,7 @@ Resources:
   OAuth2CredentialProvider:
     Type: AWS::BedrockAgentCore::OAuth2CredentialProvider
     Properties:
-      Name: !Sub '${Environment}-microsoft-oauth2-provider'
+      Name: !Sub '${Environment}-ms-oauth2-provider-${DeploymentSuffix}'
       CredentialProviderVendor: MicrosoftOauth2
       Oauth2ProviderConfigInput:
         MicrosoftOauth2ProviderConfig:
@@ -308,7 +405,7 @@ Resources:
       - AgentCoreGateway
       - OAuth2CredentialProvider
     Properties:
-      Name: !Sub '${Environment}-orders-api-target'
+      Name: !Sub '${Environment}-orders-api-target-${DeploymentSuffix}'
       Description: Gateway target for Orders API with OAuth2 authorization
       GatewayIdentifier: !GetAtt AgentCoreGateway.GatewayIdentifier
       CredentialProviderConfigurations:
@@ -328,7 +425,7 @@ Resources:
               Uri: !Sub 's3://${S3Bucket}/openapi-schema.yaml'
 
   # --------------------------------------------------------------------------
-  # AGENTCORE RUNTIME — depends on Gateway, GatewayTarget, OAuthCallbackFunctionUrl
+  # AGENTCORE RUNTIME — depends on Gateway, GatewayTarget, OAuthCallbackLambda
   # --------------------------------------------------------------------------
 
   AgentCoreRuntime:
@@ -337,7 +434,9 @@ Resources:
       - AgentCoreGateway
       - GatewayTarget
     Properties:
-      AgentRuntimeName: !Sub '${Environment}_order_agent_runtime'
+      # AgentRuntimeName pattern: ^[a-zA-Z][a-zA-Z0-9_]{0,47}$ — no hyphens, max 48 chars
+      # With suffix: dev_order_agent_runtime_202605051633 = 38 chars ✅
+      AgentRuntimeName: !Sub '${Environment}_order_agent_runtime_${DeploymentSuffix}'
       Description: Order Agent - Strands-based AI agent with MCP Gateway integration and CloudWatch observability
       RoleArn: !GetAtt RuntimeRole.Arn
       NetworkConfiguration:
@@ -362,7 +461,7 @@ Resources:
       EnvironmentVariables:
         AWS_REGION: !Ref AWS::Region
         BEDROCK_MODEL_ID: !Ref BedrockModelId
-        GATEWAY_SECRET_NAME: !Sub '${Environment}-gateway-secret'
+        GATEWAY_SECRET_NAME: !Sub '${Environment}-gateway-secret-${DeploymentSuffix}'
         GATEWAY_TOOLS_ENABLED: 'true'
         LOG_LEVEL: !Ref LogLevel
         OAUTH_CALLBACK_SERVER_URL: !Sub 'https://${AgentProxyApi}.execute-api.${AWS::Region}.amazonaws.com'
@@ -379,22 +478,6 @@ Resources:
         Project: AgentCore
 
   # --------------------------------------------------------------------------
-  # RUNTIME ENDPOINT
-  # --------------------------------------------------------------------------
-
-  RuntimeEndpoint:
-    Type: AWS::BedrockAgentCore::RuntimeEndpoint
-    DependsOn: AgentCoreRuntime
-    Properties:
-      Name: !Sub '${Environment}_order_agent_endpoint'
-      Description: Default endpoint for Order Agent runtime
-      AgentRuntimeId: !GetAtt AgentCoreRuntime.AgentRuntimeId
-      Tags:
-        Environment: !Ref Environment
-        ManagedBy: CloudFormation
-        Project: AgentCore
-
-  # --------------------------------------------------------------------------
   # AGENT PROXY LAMBDA — depends on AgentCoreRuntime (via IAM policy + env var)
   # --------------------------------------------------------------------------
 
@@ -402,7 +485,7 @@ Resources:
   AgentProxyLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-agent-proxy-lambda-role'
+      RoleName: !Sub '${Environment}-agent-proxy-lambda-role-${DeploymentSuffix}'
       Description: Execution role for Agent Proxy Lambda function
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -434,7 +517,7 @@ Resources:
   AgentProxyLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${Environment}-agent-proxy'
+      FunctionName: !Sub '${Environment}-agent-proxy-${DeploymentSuffix}'
       Description: Proxy Lambda for invoking AgentCore Runtime with CORS support
       Runtime: python3.12
       Handler: agent_proxy.handler
@@ -470,7 +553,7 @@ Resources:
   AgentProxyApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: !Sub '${Environment}-agentcore-proxy-api'
+      Name: !Sub '${Environment}-agentcore-proxy-api-${DeploymentSuffix}'
       ProtocolType: HTTP
       Description: HTTP API Gateway fronting Agent Proxy and OAuth Callback Lambdas
       CorsConfiguration:
@@ -604,3 +687,9 @@ Outputs:
     Value: !Sub 'https://${AgentProxyApi}.execute-api.${AWS::Region}.amazonaws.com/oauth2/callback'
     Export:
       Name: !Sub '${AWS::StackName}-OAuthCallbackUrl'
+
+  OAuthCallbackTableName:
+    Description: DynamoDB table name for OAuth callback token storage
+    Value: !Ref OAuthCallbackTable
+    Export:
+      Name: !Sub '${AWS::StackName}-OAuthCallbackTableName'

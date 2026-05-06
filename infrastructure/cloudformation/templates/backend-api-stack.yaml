@@ -49,12 +49,17 @@ Parameters:
     Description: JSON configuration of authorized users and their permissions
     Default: '{}'
 
+  DeploymentSuffix:
+    Type: String
+    Default: ''
+    Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
+
 Resources:
   # DynamoDB Table with GSIs for order management
   OrdersTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub '${Environment}-${TableName}'
+      TableName: !Sub '${Environment}-${TableName}-${DeploymentSuffix}'
       BillingMode: PAY_PER_REQUEST  # On-demand billing - no capacity planning needed
       AttributeDefinitions:
         - AttributeName: order_id
@@ -104,7 +109,7 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-orders-lambda-role'
+      RoleName: !Sub '${Environment}-orders-lambda-role-${DeploymentSuffix}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -140,7 +145,7 @@ Resources:
   GetOrdersFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${Environment}-get-orders'
+      FunctionName: !Sub '${Environment}-get-orders-${DeploymentSuffix}'
       Runtime: python3.9
       Handler: get_orders.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -163,7 +168,7 @@ Resources:
   CreateOrderFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${Environment}-create-order'
+      FunctionName: !Sub '${Environment}-create-order-${DeploymentSuffix}'
       Runtime: python3.9
       Handler: create_order.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -186,7 +191,7 @@ Resources:
   UpdateOrderFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${Environment}-update-order'
+      FunctionName: !Sub '${Environment}-update-order-${DeploymentSuffix}'
       Runtime: python3.9
       Handler: update_order.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
@@ -209,7 +214,7 @@ Resources:
   AuthorizerAuditLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/aws/lambda/${Environment}-orders-authorizer'
+      LogGroupName: !Sub '/aws/lambda/${Environment}-orders-authorizer-${DeploymentSuffix}'
       RetentionInDays: 30  # Balance between audit requirements and cost
       Tags:
         - Key: Environment
@@ -222,7 +227,7 @@ Resources:
   AuthorizerExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-orders-authorizer-role'
+      RoleName: !Sub '${Environment}-orders-authorizer-role-${DeploymentSuffix}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -255,7 +260,7 @@ Resources:
     Type: AWS::Lambda::Function
     DependsOn: AuthorizerAuditLogGroup
     Properties:
-      FunctionName: !Sub '${Environment}-orders-authorizer'
+      FunctionName: !Sub '${Environment}-orders-authorizer-${DeploymentSuffix}'
       Runtime: python3.9
       Handler: authorizer.lambda_handler
       Role: !GetAtt AuthorizerExecutionRole.Arn
@@ -281,7 +286,7 @@ Resources:
   OrdersApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
-      Name: !Sub '${Environment}-orders-api'
+      Name: !Sub '${Environment}-orders-api-${DeploymentSuffix}'
       Description: REST API for order management with JWT authorization
       EndpointConfiguration:
         Types:
@@ -305,7 +310,7 @@ Resources:
   ApiAuthorizer:
     Type: AWS::ApiGateway::Authorizer
     Properties:
-      Name: !Sub '${Environment}-orders-authorizer'
+      Name: !Sub '${Environment}-orders-authorizer-${DeploymentSuffix}'
       Type: TOKEN
       AuthorizerUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerFunction.Arn}/invocations'
       AuthorizerCredentials: !GetAtt ApiGatewayAuthorizerRole.Arn
@@ -317,7 +322,7 @@ Resources:
   ApiGatewayAuthorizerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-api-gateway-authorizer-role'
+      RoleName: !Sub '${Environment}-api-gw-authorizer-role-${DeploymentSuffix}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:

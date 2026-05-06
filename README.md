@@ -1,436 +1,451 @@
-# Orders API with Azure Entra ID Authentication
+# Secure Agentic App Demo
 
-This repository contains a production-ready Orders API with JWT-based authentication and role-based authorization, built on AWS Lambda, API Gateway, and DynamoDB, integrated directly with Azure Entra ID.
+An end-to-end reference implementation of a secure, agentic application built on AWS. It demonstrates how to integrate a conversational AI agent with enterprise APIs using AWS Bedrock AgentCore, secured with Azure Entra ID (Azure AD) authentication and authorization.
 
-## Features
+---
 
-✅ **Direct Azure Entra ID Integration** - Token validation directly from Azure Entra ID  
-✅ **JWT Authentication** - Signature verification using Azure public keys  
-✅ **Role-Based Authorization** - Configurable user permissions per endpoint  
-✅ **Comprehensive Audit Logging** - All access attempts logged to CloudWatch  
-✅ **Authorization Caching** - 5-minute cache for improved performance  
-✅ **Property-Based Testing** - 296 tests with Hypothesis library  
-✅ **CloudWatch Monitoring** - Dashboards and alarms for security events  
-✅ **Infrastructure as Code** - CloudFormation templates for deployment  
+## Table of Contents
 
-## Quick Start
+1. [Project Summary](#project-summary)
+2. [Architecture](#architecture)
+3. [Project Components](#project-components)
+4. [Project Structure](#project-structure)
+5. [Prerequisites](#prerequisites)
+6. [Infrastructure Code](#infrastructure-code)
+7. [Deploy the Stack](#deploy-the-stack)
+8. [Clean Up the Stack](#clean-up-the-stack)
+9. [Azure Entra ID Configuration](#azure-entra-id-configuration)
+10. [Test Scripts](#test-scripts)
 
-Get deployed and tested in 10 minutes:
+---
 
-```bash
-# 1. Configure Azure Entra ID
-# - Register application in Azure Portal
-# - Note your Tenant ID and Application ID
-# - Configure API permissions (openid, email, profile)
-# See docs/AUTHENTICATION_SETUP.md for detailed steps
+## Project Summary
 
-# 2. Package Lambda functions
-./infrastructure/scripts/package-lambdas.sh
+This project demonstrates a production-grade pattern for building secure agentic applications on AWS. A user interacts with a chat frontend, which invokes an AI agent (powered by Strands Agents and Claude Sonnet) via AWS Bedrock AgentCore Runtime. The agent uses the AgentCore Gateway (MCP protocol) to securely call a backend Orders REST API. All components are protected by Azure Entra ID JWT authentication and a 3-legged OAuth2 flow for delegated user access.
 
-# 3. Deploy to AWS with Azure Entra ID configuration
-./infrastructure/scripts/deploy-stack.sh \
-  dev-orders-api \
-  your-s3-bucket \
-  dev \
-  "https://login.microsoftonline.com/<TENANT_ID>/discovery/v2.0/keys" \
-  "https://login.microsoftonline.com/<TENANT_ID>/v2.0" \
-  "<APPLICATION_ID>" \
-  '{"user@yourdomain.com":{"permissions":["GET","POST","PUT"],"resources":["*"]}}'
+**Key capabilities demonstrated:**
+- Secure agent-to-API communication via AgentCore Gateway with MCP protocol
+- 3-legged OAuth2 authorization code flow for user-delegated API access
+- JWT-based API Gateway authorization using Azure Entra ID tokens
+- CloudFormation-based infrastructure with timestamped deployments for isolation
+- Full observability with CloudWatch dashboards and alarms
 
-# 4. Get your API URL
-export API_URL=$(aws cloudformation describe-stacks \
-  --stack-name dev-orders-api \
-  --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' \
-  --output text)
-
-# 5. Test with mock token (for local testing)
-cd tests/utils
-export TOKEN=$(python3 -c "from token_generator import MockTokenGenerator; print('Bearer ' + MockTokenGenerator().generate_token('user@yourdomain.com'))")
-cd ../..
-curl -X GET "$API_URL" -H "Authorization: $TOKEN"
-
-# 6. Test with real Azure token (for integration testing)
-./tests/utils/generate_azure_token.sh
-# Follow prompts to authenticate and get real Azure token
-```
-
-See [QUICK_START.md](QUICK_START.md) for detailed quick start instructions.
-
-## Documentation
-
-### Deployment
-- **[QUICK_START.md](QUICK_START.md)** - Get deployed in 10 minutes
-- **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Complete deployment instructions
-- **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)** - Track your deployment progress
-- **[COMMAND_REFERENCE.md](COMMAND_REFERENCE.md)** - All commands in one place
-
-### Configuration & Testing
-- **[docs/AUTHENTICATION_SETUP.md](docs/AUTHENTICATION_SETUP.md)** - Configure Azure Entra ID
-- **[docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md)** - Test scenarios and examples
-- **[docs/API_DOCUMENTATION.md](docs/API_DOCUMENTATION.md)** - Complete API reference
-
-### Monitoring & Operations
-- **[docs/MONITORING_AND_ALERTING.md](docs/MONITORING_AND_ALERTING.md)** - CloudWatch setup and incident response
-- **[infrastructure/monitoring/README.md](infrastructure/monitoring/README.md)** - Monitoring scripts usage
+---
 
 ## Architecture
 
-**Authentication Flow**: Azure Entra ID → API Gateway → Lambda Authorizer → Backend Lambdas
-
 ```
-┌─────────────────┐
-│     Client      │
-│  (Web/Mobile)   │
-└────────┬────────┘
-         │ 1. Request with Azure JWT Token
-         │    Authorization: Bearer <token>
-         ▼
-┌─────────────────────────┐
-│     API Gateway         │
-│  (Regional Endpoint)    │
-└────────┬────────────────┘
-         │ 2. Invoke Authorizer
-         ▼
-┌─────────────────────────┐      ┌──────────────────────┐
-│   Lambda Authorizer     │      │   Azure Entra ID     │
-│                         │──3──▶│   JWKS Endpoint      │
-│ • Fetch JWKS           │      │                      │
-│ • Verify Signature     │◀─4───│   Public Keys        │
-│ • Validate Claims      │      └──────────────────────┘
-│ • Check Permissions    │
-│ • Generate IAM Policy  │
-└────────┬────────────────┘
-         │ 5. Return Allow/Deny Policy
-         ▼
-┌─────────────────────────┐
-│     API Gateway         │
-│  (Policy Enforcement)   │
-└────────┬────────────────┘
-         │ 6. Route to Backend (if allowed)
-         ▼
-┌─────────────────────────┐      ┌──────────────────────┐
-│   Backend Lambdas       │      │      DynamoDB        │
-│                         │──7──▶│   orders-table       │
-│ • get_orders           │      │                      │
-│ • create_order         │◀─8───│   Query/Write Data   │
-│ • update_order         │      └──────────────────────┘
-└────────┬────────────────┘
-         │ 9. Return Response
-         ▼
-┌─────────────────────────┐
-│     API Gateway         │
-└────────┬────────────────┘
-         │ 10. Return to Client
-         ▼
-┌─────────────────┐
-│     Client      │
-└─────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              User Browser                                   │
+│                    https://<cloudfront-domain>.cloudfront.net               │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │ HTTPS (MSAL JWT)
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         CloudFront + S3 (Frontend)                          │
+│              Static web app (HTML/JS) with MSAL authentication              │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │ POST /invoke (Bearer JWT)
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    HTTP API Gateway → Agent Proxy Lambda                    │
+│              Forwards prompt + user token to AgentCore Runtime              │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │ InvokeAgentRuntime
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      AWS Bedrock AgentCore Runtime                          │
+│         order_agent.py (Strands Agent + Claude Sonnet 4.5)                  │
+│         Loads MCP tools from Gateway, handles OAuth flow                    │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │ MCP (JSON-RPC over HTTPS)
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      AWS Bedrock AgentCore Gateway                          │
+│                  Custom JWT authorizer (Azure Entra ID)                     │
+│                  OAuth2 credential provider (Microsoft)                     │
+│               Gateway Target → Orders API (OpenAPI schema)                  │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │ HTTPS (OAuth2 delegated token)
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    API Gateway → Orders API Lambdas                         │
+│         get_orders / create_order / update_order                            │
+│         Custom JWT authorizer (Azure Entra ID)                              │
+│         DynamoDB (orders table)                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-         ║
-         ║ All authentication & authorization events
-         ▼
-┌─────────────────────────┐
-│   CloudWatch Logs       │
-│                         │
-│ • Authentication logs   │
-│ • Authorization logs    │
-│ • Audit trail          │
-│ • Error tracking       │
-└─────────────────────────┘
+OAuth2 Callback Flow (3-legged):
+  AgentCore Runtime ──► OAuth Callback Lambda ──► DynamoDB (token store)
+                              │
+                              └──► AgentCore Identity API (CompleteResourceTokenAuth)
 ```
 
-**Key Components**:
-- **Azure Entra ID**: Issues JWT tokens, provides JWKS endpoint for public keys
-- **API Gateway**: Entry point, invokes authorizer before routing
-- **Lambda Authorizer**: Validates tokens, enforces authorization, caches decisions
-- **Backend Lambdas**: Process business logic, interact with DynamoDB
-- **DynamoDB**: Stores order data
-- **CloudWatch**: Logs all authentication and authorization events
+---
 
-## API Endpoints
+## Architecture Explanation
 
-All endpoints require JWT authentication via `Authorization: Bearer <token>` header.
+1. **User authenticates** via MSAL in the browser using Azure Entra ID. The frontend obtains a JWT access token.
 
-| Method | Endpoint | Description | Required Permission |
-|--------|----------|-------------|---------------------|
-| GET | `/orders` | List all orders | GET |
-| POST | `/orders` | Create new order | POST |
-| PUT | `/orders` | Update order | PUT |
+2. **Frontend sends a prompt** to the Agent Proxy Lambda via the HTTP API Gateway, including the JWT in the `Authorization` header.
 
-## Security Features
+3. **Agent Proxy Lambda** forwards the prompt and user token to the AgentCore Runtime via `InvokeAgentRuntime`.
 
-### Authentication (Azure Entra ID Direct Integration)
-- **Direct token validation** - No intermediary services required
-- **JWT signature verification** - Using Azure Entra ID public keys from JWKS endpoint
-- **Token expiration checking** - With 300-second clock skew tolerance
-- **Issuer validation** - Ensures token is from your Azure tenant
-- **Audience validation** - Verifies token is for your application
-- **Claims extraction** - Extracts user email and other claims for authorization
-- **JWKS caching** - Reduces calls to Azure Entra ID
+4. **AgentCore Runtime** runs `order_agent.py` — a Strands-based AI agent. On first invocation, it loads available MCP tools from the AgentCore Gateway. For each tool call, it initiates a 3-legged OAuth flow:
+   - Stores the user token in DynamoDB via the OAuth Callback Lambda
+   - Passes a `customState` CSRF token to the Gateway
+   - The Gateway redirects the user to Azure Entra ID for authorization
+   - After consent, Azure redirects to the OAuth Callback Lambda
+   - The callback retrieves the stored user token and calls `CompleteResourceTokenAuth`
 
-### Authorization
-- **Role-based access control (RBAC)** - User-level permissions
-- **Configurable permissions** - Per HTTP method (GET, POST, PUT, DELETE)
-- **Resource-level access control** - Fine-grained access to specific resources
-- **Explicit deny** - Fail-closed security model for unauthorized users
-- **Policy caching** - 5-minute TTL for improved performance
+5. **AgentCore Gateway** validates the agent's JWT, then calls the Orders API using the delegated OAuth2 token on behalf of the user.
 
-### Audit Logging
-- **All authentication attempts logged** - Success and failure
-- **All authorization decisions logged** - Allow and deny with reasons
-- **User context propagated** - Email and user ID passed to backend
-- **Structured JSON logs** - Easy parsing and analysis
-- **CloudWatch integration** - Centralized logging and monitoring
-- **Searchable audit trail** - Query by user, action, or result
+6. **Orders API** validates the delegated token via a custom Lambda authorizer, then reads/writes to DynamoDB.
 
-### Performance
-- **Authorization caching** - 5-minute TTL reduces authorizer invocations
-- **JWKS caching** - Reduces external calls to Azure Entra ID
-- **Lambda warm starts** - Container reuse for faster responses
-- **Optimized token validation** - Completes within 3 seconds
+---
 
-## Testing
+## Project Components
 
-The project includes comprehensive test coverage with support for both mock and real Azure tokens:
+| Component | Technology | Purpose |
+|---|---|---|
+| **Frontend** | HTML/JS + MSAL | Chat UI with Azure Entra ID authentication |
+| **Agent Proxy Lambda** | Python 3.12 | HTTP gateway to AgentCore Runtime |
+| **OAuth Callback Lambda** | Python 3.12 | Handles 3-legged OAuth2 callback flow |
+| **AgentCore Runtime** | Python 3.12 + Strands | AI agent with MCP tool integration |
+| **AgentCore Gateway** | AWS Bedrock AgentCore | MCP gateway with JWT auth + OAuth2 |
+| **Orders API** | Python 3.12 + API Gateway | REST API for order management |
+| **DynamoDB (orders)** | AWS DynamoDB | Order data storage |
+| **DynamoDB (oauth-cb)** | AWS DynamoDB | Temporary OAuth token storage |
+| **CloudFront + S3** | AWS CloudFront | Frontend CDN and static hosting |
+| **CloudWatch** | AWS CloudWatch | Dashboards, alarms, log metric filters |
 
-- **296 tests** (99.7% pass rate)
-- **Unit tests** - Mock token validation for fast testing
-- **Integration tests** - Real Azure Entra ID token validation
-- **Property-based tests** - Using Hypothesis for edge cases
-- **Mock token generator** - For local development and unit tests
-- **Real token generator** - Script to obtain Azure Entra ID tokens
-
-### Run Tests
-
-```bash
-# All tests
-pytest tests/ -v
-
-# Unit tests only (uses mock tokens)
-pytest tests/unit/ -v
-
-# Integration tests (may require real tokens)
-pytest tests/integration/ -v
-
-# Property-based tests
-pytest tests/unit/test_audit_logging_properties.py -v
-```
-
-### Generate Test Tokens
-
-```bash
-# Mock token (for unit tests)
-cd tests/utils
-python3 -c "from token_generator import MockTokenGenerator; print(MockTokenGenerator().generate_token('user@yourdomain.com'))"
-
-# Real Azure token (for integration tests)
-./tests/utils/generate_azure_token.sh
-```
-
-See [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) for comprehensive testing scenarios.
-
-## Monitoring
-
-CloudWatch monitoring includes:
-
-### Dashboard Widgets
-- API Gateway request metrics
-- Lambda Authorizer invocations and errors
-- Authentication success/failure trends
-- Authorization allow/deny trends
-- Recent failures and errors
-
-### Alarms
-- High authentication failures (>10 in 5 min)
-- Authorization errors (>5 in 5 min)
-- Lambda errors (>5 in 5 min)
-- Unusual access patterns (>20 denials in 10 min)
-- Lambda throttles (>1 in 5 min)
-
-Set up monitoring:
-```bash
-python3 infrastructure/monitoring/create_dashboard.py --stack-name dev-orders-api --region us-west-2 --api-id <api-id> --authorizer-function-name <function-name>
-python3 infrastructure/monitoring/create_alarms.py --stack-name dev-orders-api --region us-west-2 --authorizer-function-name <function-name>
-```
+---
 
 ## Project Structure
 
 ```
 .
+├── ai-agent/
+│   └── src/
+│       ├── order_agent.py              # AgentCore Runtime entrypoint (Strands agent)
+│       ├── lambdas/
+│       │   ├── agent_proxy.py          # Agent Proxy Lambda handler
+│       │   └── oauth2_callback_server.py  # OAuth Callback Lambda handler
+│       ├── lib/                        # Pre-built dependencies (aarch64, Python 3.12)
+│       └── requirements.txt
 ├── backend/
 │   └── src/
 │       └── lambdas/
-│           ├── authorizer.py              # Lambda Authorizer
-│           ├── token_validator.py         # JWT validation
-│           ├── authorization_policy.py    # RBAC logic
-│           ├── audit_logger.py            # Audit logging
-│           ├── get_orders.py              # GET endpoint
-│           ├── create_order.py            # POST endpoint
-│           └── update_order.py            # PUT endpoint
+│           ├── get_orders.py           # GET /orders Lambda
+│           ├── create_order.py         # POST /orders Lambda
+│           ├── update_order.py         # PUT /orders Lambda
+│           ├── authorizer.py           # JWT authorizer Lambda
+│           ├── authorization_policy.py # Authorization policy logic
+│           ├── token_validator.py      # JWT validation utilities
+│           └── audit_logger.py         # Audit logging utilities
+├── frontend/
+│   └── src/
+│       ├── index.html                  # Main chat UI
+│       ├── app.js                      # Frontend application logic
+│       ├── auth.js                     # MSAL authentication
+│       ├── authConfig.js               # MSAL configuration
+│       └── config.generated.js         # Auto-generated config (not committed)
 ├── infrastructure/
-│   ├── cloudformation/
-│   │   └── secure-agentcore-app-cft.yaml # CloudFormation template
-│   ├── monitoring/
-│   │   ├── create_dashboard.py           # Dashboard creation
-│   │   └── create_alarms.py              # Alarms creation
-│   └── scripts/
-│       ├── package-lambdas.sh            # Package Lambda functions
-│       └── deploy-stack.sh               # Deploy CloudFormation
-├── tests/
-│   ├── unit/                             # Unit tests
-│   ├── integration/                      # Integration tests
-│   └── utils/
-│       └── token_generator.py            # Mock token generator
+│   └── cloudformation/
+│       ├── templates/
+│       │   ├── parent.yaml             # Parent stack (orchestrates all child stacks)
+│       │   ├── backend-api-stack.yaml  # Orders API infrastructure
+│       │   ├── agentcore-app-stack.yaml # AgentCore + Agent App infrastructure
+│       │   ├── frontend-stack.yaml     # S3 + CloudFront
+│       │   └── monitoring-stack.yaml   # CloudWatch dashboards + alarms
+│       ├── parameters/
+│       │   ├── dev-parameters.json     # Dev environment parameters (gitignored)
+│       │   ├── staging-parameters.json # Staging parameters (gitignored)
+│       │   └── prod-parameters.json    # Production parameters (gitignored)
+│       └── scripts/
+│           ├── deploy-stack.sh         # Full deployment script
+│           ├── cleanup-stack.sh        # Stack deletion script
+│           ├── package-lambdas.sh      # Lambda packaging script
+│           └── validate-templates.sh   # Template validation script
 ├── docs/
-│   ├── AUTHENTICATION_SETUP.md           # Azure Entra ID setup
-│   ├── TESTING_GUIDE.md                  # Testing scenarios
-│   ├── MONITORING_AND_ALERTING.md        # Monitoring guide
-│   └── API_DOCUMENTATION.md              # API reference
-├── DEPLOYMENT_GUIDE.md                   # Deployment instructions
-├── QUICK_START.md                        # Quick start guide
-├── DEPLOYMENT_CHECKLIST.md               # Deployment checklist
-└── COMMAND_REFERENCE.md                  # Command reference
+│   ├── orders-api-openapi-3.0.yaml     # OpenAPI schema for Orders API
+│   ├── API_DOCUMENTATION.md
+│   ├── AUTHENTICATION_SETUP.md
+│   └── MONITORING_AND_ALERTING.md
+└── tests/
+    ├── utils/
+    │   ├── test_api_live.sh            # Live API test script
+    │   ├── generate_azure_token.sh     # Azure token generation helper
+    │   └── setup_test_env.sh           # Test environment setup
+    └── integration/
+        └── test_api_with_authentication.py
 ```
 
-## Requirements
-
-### Azure Requirements
-- Azure Entra ID tenant with administrative access
-- Application registered in Azure Entra ID
-- API permissions configured (openid, email, profile)
-- Admin consent granted for permissions
-
-### AWS Requirements
-- AWS account with administrative access
-- AWS CLI configured
-- S3 bucket for Lambda code
-
-### Development Requirements
-- Python 3.9+ (for Lambda runtime compatibility)
-- pip (Python package manager)
-- bash (for deployment scripts)
+---
 
 ## Prerequisites
 
-```bash
-# Check AWS prerequisites
-aws --version          # AWS CLI v2.x
-python3 --version      # Python 3.9+
-pip3 --version         # pip
-aws sts get-caller-identity  # AWS credentials configured
+### AWS Account and Permissions
 
-# Check Azure prerequisites (optional, for real token testing)
-az --version           # Azure CLI (optional)
-```
+1. **AWS Account** with access to `us-west-2` (or your target region)
 
-## Azure Entra ID Setup
+2. **AWS CLI** configured with a profile that has these permissions:
+   - `cloudformation:*`
+   - `iam:CreateRole`, `iam:AttachRolePolicy`, `iam:PassRole`, `iam:PutRolePolicy`
+   - `lambda:*`
+   - `apigateway:*`
+   - `dynamodb:*`
+   - `s3:*`
+   - `bedrock-agentcore:*`
+   - `bedrock-agentcore-control:*`
+   - `cloudfront:*`
+   - `cloudwatch:*`
+   - `logs:*`
+   - `secretsmanager:CreateSecret`, `secretsmanager:GetSecretValue`
 
-Before deploying, you need to configure Azure Entra ID:
-
-1. **Register Application**
-   - Go to Azure Portal → Microsoft Entra ID → App registrations
-   - Click "New registration"
-   - Note the Application (client) ID and Directory (tenant) ID
-
-2. **Configure API Permissions**
-   - Go to API permissions
-   - Add Microsoft Graph permissions: openid, email, profile
-   - Grant admin consent
-
-3. **Configure Token Claims**
-   - Go to Token configuration
-   - Add optional claims: email, upn, preferred_username
-
-4. **Get Configuration Values**
+3. **Two S3 buckets** (create before deploying):
    ```bash
-   TENANT_ID="your-tenant-id"
-   APPLICATION_ID="your-application-id"
-   JWKS_URL="https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys"
-   ISSUER_URL="https://login.microsoftonline.com/${TENANT_ID}/v2.0"
+   aws s3 mb s3://your-cfn-templates-bucket --region us-west-2 --no-cli-pager
+   aws s3 mb s3://your-lambda-code-bucket --region us-west-2 --no-cli-pager
    ```
 
-See [docs/AUTHENTICATION_SETUP.md](docs/AUTHENTICATION_SETUP.md) for detailed setup instructions.
+4. **Bedrock model access**: Enable `us.anthropic.claude-sonnet-4-5-20250929-v1:0` in the Bedrock console.
 
-## Cleanup
+5. **Tools required**:
+   - AWS CLI v2
+   - Python 3.12+
+   - `uv` (Python package manager): `pip install uv`
+   - Node.js 18+ (for frontend build)
+   - `zip` utility
 
-Remove all deployed resources:
+### Azure Entra ID Setup
 
+You need **three Azure App Registrations** in your Azure Entra ID tenant:
+
+#### 1. Gateway App Registration (for AgentCore Gateway JWT auth)
+- **Purpose**: The AgentCore Gateway validates JWTs issued for this app
+- **Required**: Client ID only (no secret needed)
+- **Note the**: Application (client) ID → used as `GatewayIdpClientId`
+
+#### 2. Agent App Registration (for the AI agent)
+- **Purpose**: The agent authenticates with this identity
+- **Required**: Client ID only
+- **Note the**: Application (client) ID → used as `AgentIdpClientId`
+
+#### 3. Orders API App Registration (for the Orders API + OAuth2 flow)
+- **Purpose**: Represents the Orders API; also used for OAuth2 delegated access
+- **Required**: Client ID + Client Secret
+- **Expose an API**: Add scope `/.default`
+- **Note the**: Application (client) ID → used as `TargetIdpClientId` and `TokenAudience`
+- **Note the**: Client Secret → used as `TargetIdpClientSecret`
+
+#### Common values needed from Azure Portal:
+- **Tenant ID**: Azure Portal → Azure Active Directory → Overview → Tenant ID
+- **JWKS URL**: `https://login.microsoftonline.com/{tenant-id}/discovery/v2.0/keys`
+- **Token Issuer**: `https://login.microsoftonline.com/{tenant-id}/v2.0`
+- **IDP Discovery URL**: `https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration`
+
+---
+
+## Infrastructure Code
+
+The infrastructure is organized as a **parent CloudFormation stack** with 4 nested child stacks:
+
+| Stack | Template | Resources |
+|---|---|---|
+| **BackendAPIStack** | `backend-api-stack.yaml` | DynamoDB, 4 Lambda functions, API Gateway, JWT authorizer |
+| **AgentCoreAppStack** | `agentcore-app-stack.yaml` | AgentCore Gateway, Runtime, OAuth2 provider, Agent Proxy Lambda, OAuth Callback Lambda, HTTP API Gateway, DynamoDB (oauth tokens) |
+| **FrontendStack** | `frontend-stack.yaml` | S3 bucket, CloudFront distribution, OAC |
+| **MonitoringStack** | `monitoring-stack.yaml` | CloudWatch dashboard, 5 alarms, 3 log metric filters |
+
+All stacks accept a `DeploymentSuffix` parameter (format: `yyyymmddHHMM`) that is appended to every named resource, ensuring multiple deployments can coexist in the same account without conflicts.
+
+### Parameter Files
+
+Copy the template and fill in your values:
 ```bash
-# Delete CloudFormation stack
-aws cloudformation delete-stack --stack-name dev-orders-api
-
-# Wait for stack deletion
-aws cloudformation wait stack-delete-complete --stack-name dev-orders-api
-
-# Delete Lambda packages from S3
-aws s3 rm s3://your-bucket/lambda-code/ --recursive
-
-# Delete monitoring resources (if created)
-aws cloudwatch delete-dashboards --dashboard-names dev-orders-api-auth-monitoring
-
-# Delete CloudWatch alarms (if created)
-aws cloudwatch delete-alarms --alarm-names \
-  dev-orders-api-high-auth-failures \
-  dev-orders-api-authorization-errors \
-  dev-orders-api-lambda-errors
+cp infrastructure/cloudformation/parameters/dev-parameters.json.template \
+   infrastructure/cloudformation/parameters/dev-parameters.json
 ```
 
-**Note**: Azure Entra ID application registration is not automatically deleted. You can keep it for future use or manually delete it from Azure Portal.
+Edit `dev-parameters.json` and replace all `REPLACE_WITH_*` placeholders with your actual values. **This file is gitignored** — never commit it.
 
-## Support
+---
 
-For issues or questions:
+## Deploy the Stack
 
-### Documentation
-- **[QUICK_START.md](QUICK_START.md)** - Quick deployment guide
-- **[docs/AUTHENTICATION_SETUP.md](docs/AUTHENTICATION_SETUP.md)** - Azure Entra ID configuration
-- **[docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md)** - Testing with real and mock tokens
-- **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** - Complete deployment instructions
+### Step 1: Configure parameters
 
-### Troubleshooting
-- Check CloudWatch Logs: `/aws/lambda/<authorizer-function-name>`
-- Review API Gateway execution logs
-- Verify Azure Entra ID configuration (JWKS URL, issuer, audience)
-- Check CloudFormation events in AWS Console
-- See [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) troubleshooting section
+Fill in `infrastructure/cloudformation/parameters/dev-parameters.json` with your Azure Entra ID values and S3 bucket names.
 
-### Common Issues
-1. **401 Unauthorized**: Check token expiration, issuer, and audience
-2. **403 Forbidden**: Verify user is in AUTHORIZED_USERS configuration
-3. **Token validation fails**: Ensure JWKS URL is accessible from Lambda
-4. **Slow responses**: Check authorization caching is enabled (5-minute TTL)
+### Step 2: Deploy
 
-## License
+```bash
+SUFFIX=$(date -u +"%Y%m%d%H%M")
 
-This project is provided as-is for demonstration purposes.
+bash infrastructure/cloudformation/scripts/deploy-stack.sh \
+  secure-agentcore-app-dev-${SUFFIX} \
+  your-cfn-templates-bucket \
+  your-lambda-code-bucket \
+  --profile your-aws-profile \
+  --environment dev \
+  --region us-west-2 \
+  --suffix ${SUFFIX}
+```
 
-## Contributing
+The script will:
+1. Validate all CloudFormation templates
+2. Package all Lambda functions
+3. Upload templates, Lambda packages, and OpenAPI schema to S3
+4. Deploy the CloudFormation stack (~15-20 minutes)
+5. Update the OpenAPI schema with the correct API Gateway ID
+6. Refresh the AgentCore Gateway Target
+7. Create the gateway secret in Secrets Manager
+8. Warm up the AgentCore Runtime
+9. Build and upload the frontend to S3
+10. Invalidate the CloudFront cache
 
-This is a demonstration project. For production use, consider:
+**Options:**
+```
+--dry-run       Preview changes without deploying
+--no-rollback   Keep failed stacks for debugging (use with --no-rollback)
+--suffix        Explicit timestamp suffix (auto-generated if omitted)
+```
 
-### Security Enhancements
-- **Token revocation** - Implement token blacklist or check revocation status
-- **Rate limiting** - Add API Gateway usage plans and throttling
-- **Secrets management** - Use AWS Secrets Manager for sensitive configuration
-- **Key rotation** - Implement automatic JWKS key rotation handling
-- **MFA enforcement** - Require multi-factor authentication in Azure Entra ID
+### Step 2: Post-deployment — Update Azure Entra ID
 
-### Operational Improvements
-- **CI/CD pipeline** - Automate testing and deployment
-- **API versioning** - Support multiple API versions
-- **Request/response validation** - Add JSON schema validation
-- **Error handling** - Implement comprehensive error responses
-- **Monitoring dashboards** - Create custom CloudWatch dashboards
-- **Alerting** - Set up SNS notifications for critical events
+See [Azure Entra ID Configuration](#azure-entra-id-configuration) below.
 
-### Performance Optimization
-- **Lambda provisioned concurrency** - Reduce cold starts
-- **DynamoDB on-demand scaling** - Optimize for traffic patterns
-- **API Gateway caching** - Cache GET responses
-- **CloudFront distribution** - Add CDN for global distribution
+---
 
-### Compliance & Governance
-- **Data encryption** - Enable encryption at rest and in transit
-- **Backup strategy** - Implement automated backups
-- **Disaster recovery** - Multi-region deployment
-- **Compliance logging** - Enhanced audit trails for compliance requirements
+## Clean Up the Stack
+
+```bash
+bash infrastructure/cloudformation/scripts/cleanup-stack.sh \
+  secure-agentcore-app-dev-202605051633 \
+  --profile your-aws-profile \
+  --region us-west-2
+```
+
+Type `DELETE` when prompted to confirm. Use `--force` to skip the prompt.
+
+The script automatically empties the versioned S3 bucket before deletion to prevent `BucketNotEmpty` errors.
+
+---
+
+## Azure Entra ID Configuration
+
+After deploying the stack, retrieve the required URLs from the stack outputs:
+
+```bash
+aws cloudformation describe-stacks \
+  --stack-name secure-agentcore-app-dev-<suffix> \
+  --profile your-aws-profile \
+  --region us-west-2 \
+  --no-cli-pager \
+  --query 'Stacks[0].Outputs[*].[OutputKey,OutputValue]' \
+  --output table
+```
+
+Note these values:
+- `CloudFrontDomainName` → e.g. `d1xukfr61eh0xg.cloudfront.net`
+- `CallbackUrl` → AgentCore Identity callback URL (e.g. `https://bedrock-agentcore.us-west-2.amazonaws.com/identities/oauth2/callback/...`)
+
+### 1. Update the Gateway App Registration (AgentCore Gateway JWT auth)
+
+In Azure Portal → App Registrations → **Gateway App** (`GatewayIdpClientId`):
+
+1. Go to **Authentication**
+2. Under **Single-page application** or **Web**, add a Redirect URI:
+   ```
+   https://<CloudFrontDomainName>
+   ```
+   This allows the frontend to authenticate and obtain tokens for the gateway audience.
+
+### 2. Update the Orders API App Registration (AgentCore Identity callback)
+
+In Azure Portal → App Registrations → **Orders API App** (`TargetIdpClientId`):
+
+1. Go to **Authentication**
+2. Under **Web**, add a Redirect URI:
+   ```
+   <CallbackUrl>
+   ```
+   This is the AgentCore Identity service callback URL that completes the 3-legged OAuth2 flow when a user authorizes the agent to access the Orders API on their behalf.
+
+---
+
+## Test Scripts
+
+### 1. Live API Test (`tests/utils/test_api_live.sh`)
+
+Tests the Orders API end-to-end with real Azure Entra ID tokens.
+
+```bash
+# Set your Azure token first
+export AZURE_TOKEN=$(bash tests/utils/generate_azure_token.sh)
+
+# Run the tests
+bash tests/utils/test_api_live.sh
+```
+
+The script will prompt for the stack name (default: `secure-agentcore-app`), then run 8 tests covering:
+- Unauthenticated access (expects 401)
+- Invalid/expired tokens (expects 403)
+- Unauthorized users (expects 403)
+- Authorized GET, POST, PUT operations (expects 200/201)
+
+### 2. Generate Azure Token (`tests/utils/generate_azure_token.sh`)
+
+Generates an Azure Entra ID access token for testing.
+
+```bash
+export AZURE_TOKEN=$(bash tests/utils/generate_azure_token.sh)
+echo "Token: ${AZURE_TOKEN:0:50}..."
+```
+
+### 3. Setup Test Environment (`tests/utils/setup_test_env.sh`)
+
+Sets up environment variables needed for testing.
+
+```bash
+source tests/utils/setup_test_env.sh
+```
+
+### 4. Integration Tests (`tests/integration/test_api_with_authentication.py`)
+
+Python-based integration tests for the Orders API.
+
+```bash
+cd tests/integration
+python test_api_with_authentication.py
+```
+
+### 5. Template Validation (`infrastructure/cloudformation/scripts/validate-templates.sh`)
+
+Validates all CloudFormation templates using AWS CLI and cfn-lint.
+
+```bash
+bash infrastructure/cloudformation/scripts/validate-templates.sh
+```
+
+---
+
+## Important Notes
+
+- **Parameter files are gitignored** — never commit `dev-parameters.json`, `staging-parameters.json`, or `prod-parameters.json` as they contain secrets.
+- **Each deployment gets a unique suffix** — use the same suffix for cleanup as was used for deployment.
+- **The `ai-agent/src/lib/` directory** contains pre-compiled `aarch64` Python 3.12 binaries for the AgentCore Runtime. The deploy script rebuilds it automatically if missing. Only rebuild manually when upgrading dependency versions:
+  ```bash
+  rm -rf ai-agent/src/lib && mkdir -p ai-agent/src/lib
+  uv pip install \
+    --python-platform aarch64-manylinux2014 \
+    --python-version 3.12 \
+    --target=ai-agent/src/lib \
+    --only-binary=:all: \
+    "bedrock-agentcore==1.7.0" \
+    "strands-agents==1.37.0" \
+    "aws-opentelemetry-distro==0.17.0"
+  ```
+- **The OpenAPI schema** (`docs/orders-api-openapi-3.0.yaml`) contains a placeholder API Gateway ID that is automatically replaced during deployment.
+- **Gateway secret** (`${environment}-gateway-secret-${suffix}`) is created automatically by the deploy script and contains the Azure credentials needed by the agent for client-credentials OAuth flow fallback.

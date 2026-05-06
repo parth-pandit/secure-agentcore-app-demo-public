@@ -138,6 +138,8 @@ shift 3
 # Parse optional arguments
 DRY_RUN=false
 ENVIRONMENT="dev"
+DEPLOY_SUFFIX=""
+NO_ROLLBACK=false
 AWS_PROFILE_ARG="${AWS_PROFILE:-}"  # Inherit from environment if set
 AWS_REGION_ARG="${AWS_DEFAULT_REGION:-}"  # Inherit from environment if set
 
@@ -145,6 +147,10 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run)
             DRY_RUN=true
+            shift
+            ;;
+        --no-rollback)
+            NO_ROLLBACK=true
             shift
             ;;
         --environment)
@@ -159,8 +165,8 @@ while [ $# -gt 0 ]; do
             AWS_REGION_ARG="$2"
             shift 2
             ;;
-        --region)
-            AWS_REGION_ARG="$2"
+        --suffix)
+            DEPLOY_SUFFIX="$2"
             shift 2
             ;;
         --help)
@@ -172,6 +178,12 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# Generate deployment suffix if not provided (yyyymmddHHMM format)
+if [ -z "${DEPLOY_SUFFIX}" ]; then
+    DEPLOY_SUFFIX=$(date -u +"%Y%m%d%H%M")
+fi
+log_info "  Deployment Suffix: ${DEPLOY_SUFFIX}"
 
 # Build the AWS CLI profile flag — used in every aws command below
 # If no profile specified and AWS_PROFILE env var is not set, AWS CLI uses "default"
@@ -353,15 +365,43 @@ echo ""
 
 log_info "Uploading OpenAPI schema to S3..."
 
-# Upload the OpenAPI schema required by AgentCore GatewayTarget
-# The schema must exist at s3://<lambda-bucket>/openapi-schema.yaml
+# Upload the OpenAPI schema required by AgentCore GatewayTarget.
+# The API Gateway ID in the schema is substituted with the actual value
+# from the BackendAPIStack output so the Gateway Target points to the
+# correct account's Orders API.
 OPENAPI_SCHEMA="${PROJECT_ROOT}/docs/orders-api-openapi-3.0.yaml"
 if [ ! -f "${OPENAPI_SCHEMA}" ]; then
     log_error "OpenAPI schema not found: ${OPENAPI_SCHEMA}"
     exit 3
 fi
 
-if aws s3 cp "${OPENAPI_SCHEMA}" "s3://${LAMBDA_BUCKET}/openapi-schema.yaml" \
+# Get the API Gateway ID from the existing stack if it's already deployed,
+# otherwise use a placeholder — it will be corrected after the stack deploys.
+EXISTING_API_GW_ID=$(aws cloudformation describe-stacks \
+    --stack-name "${STACK_NAME}" \
+    --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayId`].OutputValue' \
+    --output text --no-cli-pager \
+    ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null || echo "")
+
+if [ -n "${EXISTING_API_GW_ID}" ] && [ "${EXISTING_API_GW_ID}" != "None" ]; then
+    log_info "Substituting API Gateway ID in OpenAPI schema: ${EXISTING_API_GW_ID}"
+    OPENAPI_SCHEMA_TMP=$(mktemp /tmp/openapi-schema-XXXXXX.yaml)
+    python3 -c "
+import re, sys
+with open('${OPENAPI_SCHEMA}') as f:
+    content = f.read()
+api_gw_id = '${EXISTING_API_GW_ID}'
+fixed = re.sub(r'(apiId:\s*\n\s*default: )[a-z0-9]+', lambda m: m.group(1) + api_gw_id, content)
+with open(sys.argv[1], 'w') as f:
+    f.write(fixed)
+" "${OPENAPI_SCHEMA_TMP}"
+    UPLOAD_SCHEMA="${OPENAPI_SCHEMA_TMP}"
+else
+    log_warning "Stack not yet deployed — uploading schema with placeholder API ID (will be corrected post-deploy)"
+    UPLOAD_SCHEMA="${OPENAPI_SCHEMA}"
+fi
+
+if aws s3 cp "${UPLOAD_SCHEMA}" "s3://${LAMBDA_BUCKET}/openapi-schema.yaml" \
     --no-cli-pager \
     ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG}; then
     log_success "OpenAPI schema uploaded to s3://${LAMBDA_BUCKET}/openapi-schema.yaml"
@@ -369,6 +409,7 @@ else
     log_error "Failed to upload OpenAPI schema to S3"
     exit 3
 fi
+[ -n "${OPENAPI_SCHEMA_TMP:-}" ] && rm -f "${OPENAPI_SCHEMA_TMP}"
 
 echo ""
 
@@ -424,6 +465,8 @@ if [ ${#PARAM_OVERRIDES[@]} -eq 0 ]; then
 fi
 
 log_info "Parsed ${#PARAM_OVERRIDES[@]} parameter(s) from ${PARAMETER_FILE}"
+# Append the deployment suffix so all templates can use it for resource naming
+PARAM_OVERRIDES+=("DeploymentSuffix=${DEPLOY_SUFFIX}")
 
 # Build deployment command with required parameters
 DEPLOY_CMD=(
@@ -451,6 +494,12 @@ if [ "$DRY_RUN" = true ]; then
     log_warning "Dry-run mode: Changeset will be created but not executed"
 fi
 
+# Add --disable-rollback flag to preserve failed stacks for debugging
+if [ "$NO_ROLLBACK" = true ]; then
+    DEPLOY_CMD+=(--disable-rollback)
+    log_warning "No-rollback mode: Failed stacks will NOT be rolled back — inspect events then delete manually"
+fi
+
 # Execute deployment command
 # CloudFormation will automatically handle create vs update operations
 if "${DEPLOY_CMD[@]}"; then
@@ -469,6 +518,138 @@ else
 fi
 
 echo ""
+
+    # Post-deploy: re-upload OpenAPI schema with the actual API Gateway ID from the new stack,
+    # then refresh the Gateway Target to pick it up.
+    if [ "$DRY_RUN" = false ]; then
+        log_info "Updating OpenAPI schema with deployed API Gateway ID..."
+        ACTUAL_API_GW_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayId`].OutputValue' \
+            --output text --no-cli-pager \
+            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+
+        if [ -n "${ACTUAL_API_GW_ID}" ] && [ "${ACTUAL_API_GW_ID}" != "None" ]; then
+            OPENAPI_SCHEMA_POST=$(mktemp /tmp/openapi-schema-post-XXXXXX.yaml)
+            # Use Python for precise replacement of only the apiId default value
+            python3 -c "
+import re, sys
+with open('${PROJECT_ROOT}/docs/orders-api-openapi-3.0.yaml') as f:
+    content = f.read()
+api_gw_id = '${ACTUAL_API_GW_ID}'
+fixed = re.sub(r'(apiId:\s*\n\s*default: )[a-z0-9]+', lambda m: m.group(1) + api_gw_id, content)
+with open(sys.argv[1], 'w') as f:
+    f.write(fixed)
+" "${OPENAPI_SCHEMA_POST}"
+            if aws s3 cp "${OPENAPI_SCHEMA_POST}" "s3://${LAMBDA_BUCKET}/openapi-schema.yaml" \
+                --no-cli-pager ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG}; then
+                log_success "OpenAPI schema updated with API Gateway ID: ${ACTUAL_API_GW_ID}"
+            else
+                log_warning "Failed to update OpenAPI schema post-deploy"
+            fi
+            rm -f "${OPENAPI_SCHEMA_POST}"
+        else
+            log_warning "Could not retrieve API Gateway ID — OpenAPI schema may point to wrong account"
+        fi
+    fi
+
+    # Post-deploy: refresh Gateway Target to pick up the updated OpenAPI schema
+    # The schema was uploaded with the correct API Gateway ID before deployment
+    if [ "$DRY_RUN" = false ]; then
+        log_info "Refreshing AgentCore Gateway Target with updated OpenAPI schema..."
+        GATEWAY_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`GatewayId`].OutputValue' \
+            --output text --no-cli-pager \
+            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+        
+        TARGET_ID=$(aws bedrock-agentcore-control list-gateway-targets \
+            --gateway-identifier "${GATEWAY_ID}" \
+            --no-cli-pager \
+            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} \
+            --query 'items[0].targetId' \
+            --output text 2>/dev/null)
+        
+        if [ -n "${GATEWAY_ID}" ] && [ -n "${TARGET_ID}" ] && [ "${TARGET_ID}" != "None" ]; then
+            OAUTH_PROVIDER_ARN=$(aws cloudformation describe-stacks \
+                --stack-name "${STACK_NAME}" \
+                --query 'Stacks[0].Outputs[?OutputKey==`CredentialProviderArn`].OutputValue' \
+                --output text --no-cli-pager \
+                ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+            OAUTH_CALLBACK_URL=$(aws cloudformation describe-stacks \
+                --stack-name "${STACK_NAME}" \
+                --query 'Stacks[0].Outputs[?OutputKey==`OAuthCallbackUrl`].OutputValue' \
+                --output text --no-cli-pager \
+                ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+            TARGET_IDP_CLIENT_ID=$(python3 -c "
+import json
+with open('${PARAMETERS_DIR}/${ENVIRONMENT}-parameters.json') as f:
+    params = {p['ParameterKey']: p['ParameterValue'] for p in json.load(f) if 'ParameterKey' in p}
+print(params.get('TargetIdpClientId',''))
+" 2>/dev/null)
+            
+            aws bedrock-agentcore-control update-gateway-target \
+                --gateway-identifier "${GATEWAY_ID}" \
+                --target-id "${TARGET_ID}" \
+                --name "${ENVIRONMENT}-orders-api-target-${DEPLOY_SUFFIX}" \
+                --target-configuration "{\"mcp\":{\"openApiSchema\":{\"s3\":{\"uri\":\"s3://${LAMBDA_BUCKET}/openapi-schema.yaml\"}}}}" \
+                --credential-provider-configurations "[{\"credentialProviderType\":\"OAUTH\",\"credentialProvider\":{\"oauthCredentialProvider\":{\"providerArn\":\"${OAUTH_PROVIDER_ARN}\",\"grantType\":\"AUTHORIZATION_CODE\",\"defaultReturnUrl\":\"${OAUTH_CALLBACK_URL%/callback}/oauth2/callback\",\"scopes\":[\"${TARGET_IDP_CLIENT_ID}/.default\"]}}}]" \
+                --no-cli-pager \
+                ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>&1 \
+                && log_success "Gateway Target refreshed with updated OpenAPI schema" \
+                || log_warning "Could not refresh Gateway Target — check errors above"
+        else
+            log_warning "Could not find Gateway ID or Target ID — skipping Gateway Target refresh"
+        fi
+    fi
+
+    # Create gateway secret if it doesn't exist
+    if [ "$DRY_RUN" = false ]; then
+        GATEWAY_SECRET_NAME="${ENVIRONMENT}-gateway-secret-${DEPLOY_SUFFIX}"
+        GATEWAY_URL=$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`GatewayUrl`].OutputValue' \
+            --output text --no-cli-pager \
+            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+        API_GW_ID=$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayId`].OutputValue' \
+            --output text --no-cli-pager \
+            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+        
+        SECRET_EXISTS=$(aws secretsmanager describe-secret \
+            --secret-id "${GATEWAY_SECRET_NAME}" \
+            --no-cli-pager \
+            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} \
+            --query 'Name' --output text 2>/dev/null || echo "")
+        
+        if [ -z "${SECRET_EXISTS}" ]; then
+            log_info "Creating gateway secret: ${GATEWAY_SECRET_NAME}..."
+            SECRET_VALUE=$(python3 -c "
+import json
+with open('${PARAMETERS_DIR}/${ENVIRONMENT}-parameters.json') as f:
+    params = {p['ParameterKey']: p['ParameterValue'] for p in json.load(f) if 'ParameterKey' in p}
+secret = {
+    'tenant_id': params.get('TargetIdpTenantId',''),
+    'client_id': params.get('GatewayIdpClientId',''),
+    'client_secret': params.get('TargetIdpClientSecret',''),
+    'gateway_mcp_url': '${GATEWAY_URL}',
+    'orders_api_gateway_id': '${API_GW_ID}'
+}
+print(json.dumps(secret))
+" 2>/dev/null)
+            aws secretsmanager create-secret \
+                --name "${GATEWAY_SECRET_NAME}" \
+                --description "AgentCore gateway credentials for ${ENVIRONMENT} environment" \
+                --secret-string "${SECRET_VALUE}" \
+                --no-cli-pager \
+                ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} > /dev/null 2>&1 \
+                && log_success "Gateway secret created: ${GATEWAY_SECRET_NAME}" \
+                || log_warning "Could not create gateway secret — create manually"
+        else
+            log_info "Gateway secret already exists: ${GATEWAY_SECRET_NAME}"
+        fi
+    fi
 
 ################################################################################
 # Warm Up AgentCore Runtime

@@ -391,6 +391,21 @@ echo ""
 log_info "Step 2/2: Deleting CloudFormation stack..."
 log_info "Initiating stack deletion: $STACK_NAME"
 
+# Check current stack status — CREATE_FAILED stacks (from --no-rollback deployments)
+# can be deleted directly. ROLLBACK_COMPLETE stacks also delete fine.
+CURRENT_STATUS=$(aws cloudformation describe-stacks \
+    --stack-name "$STACK_NAME" \
+    --no-cli-pager \
+    ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} \
+    --query 'Stacks[0].StackStatus' \
+    --output text 2>/dev/null || echo "UNKNOWN")
+
+log_info "Current stack status: ${CURRENT_STATUS}"
+
+if [ "${CURRENT_STATUS}" = "CREATE_FAILED" ]; then
+    log_warning "Stack is in CREATE_FAILED state (deployed with --no-rollback). Proceeding with deletion..."
+fi
+
 if aws cloudformation delete-stack \
     --stack-name "$STACK_NAME" \
     --no-cli-pager \

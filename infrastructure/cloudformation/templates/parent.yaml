@@ -146,6 +146,11 @@ Parameters:
     Default: ''
     Description: Optional SNS topic ARN for CloudWatch alarm notifications
 
+  DeploymentSuffix:
+    Type: String
+    Default: ''
+    Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
+
 # ============================================================================
 # RESOURCES - NESTED STACKS
 # ============================================================================
@@ -171,6 +176,7 @@ Resources:
         TokenIssuer: !Ref TokenIssuer
         TokenAudience: !Ref TokenAudience
         AuthorizedUsers: !Ref AuthorizedUsers
+        DeploymentSuffix: !Ref DeploymentSuffix
       
       # Tags for cost allocation and resource management
       Tags:
@@ -210,6 +216,7 @@ Resources:
         S3Bucket: !Ref LambdaCodeBucket
         # Cross-stack reference: Get API URL from Backend API Stack
         ApiUrl: !GetAtt BackendAPIStack.Outputs.ApiUrl
+        DeploymentSuffix: !Ref DeploymentSuffix
       
       # Tags for cost allocation and resource management
       Tags:
@@ -236,9 +243,10 @@ Resources:
       # Pass required parameters to child stack
       Parameters:
         Environment: !Ref Environment
-        BucketName: !Sub '${Environment}-frontend-${AWS::AccountId}'
+        BucketName: !Sub '${Environment}-frontend-${AWS::AccountId}-${DeploymentSuffix}'
         CloudFrontPriceClass: !Ref CloudFrontPriceClass
         SslCertificateArn: !Ref SslCertificateArn
+        DeploymentSuffix: !Ref DeploymentSuffix
       
       # Tags for cost allocation and resource management
       Tags:
@@ -270,6 +278,7 @@ Resources:
         ApiGatewayId: !GetAtt BackendAPIStack.Outputs.ApiGatewayId
         AuthorizerFunctionName: !GetAtt BackendAPIStack.Outputs.AuthorizerFunctionName
         SnsTopicArn: !Ref SnsTopicArn
+        DeploymentSuffix: !Ref DeploymentSuffix
       
       # Tags for cost allocation and resource management
       Tags:
@@ -381,6 +390,12 @@ Outputs:
     Value: !GetAtt AgentCoreAppStack.Outputs.OAuthCallbackUrl
     Export:
       Name: !Sub '${AWS::StackName}-OAuthCallbackUrl'
+
+  CredentialProviderArn:
+    Description: OAuth2 Credential Provider ARN (used by deploy script to refresh Gateway Target)
+    Value: !GetAtt AgentCoreAppStack.Outputs.CredentialProviderArn
+    Export:
+      Name: !Sub '${AWS::StackName}-CredentialProviderArn'
   
   # ============================================================================
   # FRONTEND STACK OUTPUTS

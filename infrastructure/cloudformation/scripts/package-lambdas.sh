@@ -192,6 +192,11 @@ package_ai_agent_lambda() {
 # Creates deployment package for AWS Bedrock AgentCore Runtime
 # This includes the Strands-based agent code and all dependencies
 #
+# The lib/ directory must be pre-built using:
+# uv pip install --python-platform aarch64-manylinux2014 --python-version 3.12 \
+#   --target=ai-agent/src/lib --only-binary=:all: \
+#   "bedrock-agentcore==1.7.0" "strands-agents==1.37.0" "aws-opentelemetry-distro==0.17.0"
+#
 # Output: order-agent.zip containing:
 #   - order_agent.py (main agent entrypoint)
 #   - All dependencies from ai-agent/src/lib/
@@ -215,10 +220,19 @@ package_agentcore_runtime() {
         print_info "Copying pre-installed dependencies..."
         cp -r "$AI_AGENT_SRC_DIR/lib/"* "$temp_dir/"
     else
-        # Fallback: Install dependencies if lib directory doesn't exist
-        print_warning "Pre-installed lib directory not found, installing dependencies..."
-        if [ -f "$AI_AGENT_SRC_DIR/requirements.txt" ]; then
-            pip install -q --target "$temp_dir" -r "$AI_AGENT_SRC_DIR/requirements.txt" --upgrade
+        print_warning "Pre-installed lib directory not found, building with uv..."
+        if command -v uv &> /dev/null; then
+            uv pip install \
+              --python-platform aarch64-manylinux2014 \
+              --python-version 3.12 \
+              --target="$temp_dir" \
+              --only-binary=:all: \
+              "bedrock-agentcore==1.7.0" \
+              "strands-agents==1.37.0" \
+              "aws-opentelemetry-distro==0.17.0"
+        else
+            print_error "uv is required to build the order-agent package. Install with: pip install uv"
+            exit 1
         fi
     fi
     
