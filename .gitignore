@@ -1,0 +1,104 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Testing
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Lambda packages
+infrastructure/lambda-packages/
+
+# AWS
+*.zip
+*.pem
+*.key
+
+# Logs
+*.log
+logs/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Frontend generated configuration
+frontend/src/config.generated.js
+frontend/node_modules/
+frontend/package-lock.json
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Development files with actual values (DO NOT COMMIT)
+*-dev.properties
+*-dev.sh
+*-dev.json
+*_details.json
+agent_runtime_details.json
+agentcore_gateway_details.json
+agentcore_identity_details.json
+
+# CloudFormation parameter files with actual values (DO NOT COMMIT)
+# These files contain sensitive information like client IDs, secrets, and tenant IDs
+# The .template versions are safe to commit as they contain only REPLACE_WITH placeholders
+infrastructure/cloudformation/parameters/dev-parameters.json
+infrastructure/cloudformation/parameters/staging-parameters.json
+infrastructure/cloudformation/parameters/prod-parameters.json
+infrastructure/cloudformation/agentcore-gateway-parameters.json
+
+# Keep template files for reference (with REPLACE_WITH placeholders)
+!infrastructure/cloudformation/parameters/*-parameters.json.template
+!infrastructure/cloudformation/agentcore-gateway-parameters.json.template
+
+# Kiro specs and settings
+.kiro/settings/mcp.json
+.kiro/specs/*/design.md
+.kiro/specs/*/IMPLEMENTATION_SUMMARY.md
+.kiro/specs/*/requirements.md
+.kiro/specs/*/tasks.md
+.kiro/specs/*/.config.kiro
+.kiro/specs/*/bugfix.md

@@ -1,0 +1,297 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Frontend Stack - S3 Static Website Hosting with CloudFront CDN'
+
+# ============================================================================
+# PARAMETERS
+# ============================================================================
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (dev, staging, prod)
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  BucketName:
+    Type: String
+    Description: S3 bucket name for static website hosting (leave empty for auto-generated name)
+    Default: ''
+
+  CloudFrontPriceClass:
+    Type: String
+    Description: CloudFront distribution price class (affects cost and edge location coverage)
+    Default: PriceClass_100
+    AllowedValues:
+      - PriceClass_100  # US, Canada, Europe - lowest cost
+      - PriceClass_200  # US, Canada, Europe, Asia, Middle East, Africa
+      - PriceClass_All  # All edge locations - highest cost, best performance
+
+  SslCertificateArn:
+    Type: String
+    Description: Optional ACM certificate ARN for custom domain (must be in us-east-1 for CloudFront)
+    Default: ''
+
+  DeploymentSuffix:
+    Type: String
+    Default: ''
+    Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
+
+# ============================================================================
+# CONDITIONS
+# ============================================================================
+Conditions:
+  # Use auto-generated bucket name if BucketName parameter is empty
+  AutoGenerateBucketName: !Equals [!Ref BucketName, '']
+  
+  # Use SSL certificate if ARN is provided
+  HasSslCertificate: !Not [!Equals [!Ref SslCertificateArn, '']]
+
+# ============================================================================
+# RESOURCES
+# ============================================================================
+Resources:
+  # --------------------------------------------------------------------------
+  # S3 Bucket for Static Website Hosting
+  # --------------------------------------------------------------------------
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # Use provided name or auto-generate with stack name prefix
+      BucketName: !If
+        - AutoGenerateBucketName
+        - !Sub '${AWS::StackName}-frontend-${AWS::AccountId}-${DeploymentSuffix}'
+        - !Ref BucketName
+      
+      # Enable versioning for rollback capability
+      # Allows reverting to previous versions if deployment issues occur
+      VersioningConfiguration:
+        Status: Enabled
+      
+      # Block all public access - CloudFront will provide controlled access
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      
+      # Enable encryption at rest using S3-managed keys (no additional cost)
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      
+      # Lifecycle policy to manage versioned objects and reduce storage costs
+      LifecycleConfiguration:
+        Rules:
+          # Delete old versions after 30 days to control storage costs
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+      
+      # Tags for resource management and cost allocation
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: Frontend
+        - Key: Purpose
+          Value: StaticWebsiteHosting
+
+  # --------------------------------------------------------------------------
+  # CloudFront Origin Access Control (OAC) — modern replacement for OAI
+  # Matches reference account which uses cloudfront.amazonaws.com service principal
+  # --------------------------------------------------------------------------
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${Environment}-frontend-oac-${DeploymentSuffix}'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # --------------------------------------------------------------------------
+  # S3 Bucket Policy — uses OAC service principal (matches reference account)
+  # --------------------------------------------------------------------------
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontOACAccess
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+  # --------------------------------------------------------------------------
+  # CloudFront Distribution
+  # --------------------------------------------------------------------------
+  # CDN for global content delivery with low latency
+  # Cost: ~$0.085/GB for first 10TB in US/Europe (PriceClass_100)
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        # Enable distribution immediately after creation
+        Enabled: true
+        
+        # HTTP/2 support for better performance (enabled by default)
+        HttpVersion: http2
+        
+        # IPv6 support for future-proofing
+        IPV6Enabled: true
+        
+        # Default root object for directory requests
+        DefaultRootObject: index.html
+        
+        # Comment for identification in CloudFront console
+        Comment: !Sub '${AWS::StackName} Frontend Distribution'
+        
+        # --------------------------------------------------------------------------
+        # Origin Configuration - S3 Bucket
+        # --------------------------------------------------------------------------
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            # Use OAC (Origin Access Control) — modern replacement for OAI
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+        
+        # --------------------------------------------------------------------------
+        # Default Cache Behavior
+        # --------------------------------------------------------------------------
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          
+          # Viewer protocol policy - redirect HTTP to HTTPS for security
+          ViewerProtocolPolicy: redirect-to-https
+          
+          # Allowed HTTP methods for static website
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          
+          # Cached HTTP methods
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          
+          # Compress content automatically for faster delivery
+          Compress: true
+          
+          # Cache policy - use AWS managed CachingOptimized policy
+          # This provides good defaults for static content caching
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
+          
+          # Origin request policy - use AWS managed CORS-S3Origin policy
+          # Forwards necessary headers for CORS requests
+          OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf  # Managed-CORS-S3Origin
+        
+        # --------------------------------------------------------------------------
+        # Custom Error Responses for SPA Routing
+        # --------------------------------------------------------------------------
+        # Handle client-side routing by returning index.html for 404 errors
+        # This allows React/Vue/Angular apps to handle routing on the client side
+        CustomErrorResponses:
+          # Return index.html with 200 status for 404 errors
+          # This enables SPA routing (e.g., /about, /contact routes)
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 300  # Cache error responses for 5 minutes
+          
+          # Return index.html with 200 status for 403 errors
+          # S3 returns 403 for missing objects when using OAI
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 300
+        
+        # --------------------------------------------------------------------------
+        # Price Class Configuration
+        # --------------------------------------------------------------------------
+        # Controls which edge locations are used (affects cost and performance)
+        # PriceClass_100: US, Canada, Europe (lowest cost)
+        # PriceClass_200: Adds Asia, Middle East, Africa
+        # PriceClass_All: All edge locations (highest cost, best global performance)
+        PriceClass: !Ref CloudFrontPriceClass
+        
+        # --------------------------------------------------------------------------
+        # SSL/TLS Configuration
+        # --------------------------------------------------------------------------
+        ViewerCertificate:
+          # Use custom SSL certificate if provided, otherwise use CloudFront default
+          !If
+            - HasSslCertificate
+            # Custom SSL certificate (for custom domain)
+            - AcmCertificateArn: !Ref SslCertificateArn
+              SslSupportMethod: sni-only  # SNI is free, dedicated IP costs $600/month
+              MinimumProtocolVersion: TLSv1.2_2021  # Modern TLS version for security
+            # Default CloudFront certificate (*.cloudfront.net domain)
+            - CloudFrontDefaultCertificate: true
+      
+      # Tags for resource management
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: Frontend
+
+# ============================================================================
+# OUTPUTS
+# ============================================================================
+Outputs:
+  S3BucketName:
+    Description: Frontend S3 bucket name
+    Value: !Ref FrontendBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-S3BucketName'
+
+  S3BucketUrl:
+    Description: Frontend S3 bucket URL
+    Value: !Sub 'https://${FrontendBucket.RegionalDomainName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-S3BucketUrl'
+
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontDistributionId'
+
+  CloudFrontDomainName:
+    Description: CloudFront distribution domain name (use this URL to access the frontend)
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontDomainName'
+
+  CloudFrontUrl:
+    Description: Full CloudFront HTTPS URL
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontUrl'
+
+  # Additional outputs for deployment automation
+  BucketArn:
+    Description: Frontend S3 bucket ARN
+    Value: !GetAtt FrontendBucket.Arn
+
+  DistributionArn:
+    Description: CloudFront distribution ARN
+    Value: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'

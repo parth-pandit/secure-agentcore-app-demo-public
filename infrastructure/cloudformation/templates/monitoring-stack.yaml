@@ -1,0 +1,409 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Monitoring Stack - CloudWatch dashboards, alarms, and log metric filters for Orders API observability'
+
+# ==============================================================================
+# PARAMETERS
+# ==============================================================================
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (dev, staging, prod)
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  ApiGatewayId:
+    Type: String
+    Description: API Gateway REST API ID from Backend API Stack
+    MinLength: 10
+
+  AuthorizerFunctionName:
+    Type: String
+    Description: Lambda authorizer function name from Backend API Stack
+    MinLength: 1
+
+  SnsTopicArn:
+    Type: String
+    Description: Optional SNS topic ARN for alarm notifications
+    Default: ''
+
+  DeploymentSuffix:
+    Type: String
+    Default: ''
+    Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
+
+# ==============================================================================
+# CONDITIONS
+# ==============================================================================
+Conditions:
+  # Enable SNS notifications if topic ARN is provided
+  HasSnsTopicArn: !Not [!Equals [!Ref SnsTopicArn, '']]
+
+# ==============================================================================
+# RESOURCES
+# ==============================================================================
+Resources:
+  # ----------------------------------------------------------------------------
+  # CloudWatch Dashboard
+  # ----------------------------------------------------------------------------
+  OrdersApiDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${Environment}-orders-api-dashboard-${DeploymentSuffix}'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/ApiGateway", "Count", {"stat": "Sum", "label": "Total Requests"}],
+                  [".", "4XXError", {"stat": "Sum", "label": "Client Errors"}],
+                  [".", "5XXError", {"stat": "Sum", "label": "Server Errors"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "API Gateway Request Metrics",
+                "period": 300,
+                "dimensions": {
+                  "ApiName": "${ApiGatewayId}"
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/ApiGateway", "Latency", {"stat": "Average", "label": "Avg Latency"}],
+                  ["...", {"stat": "p99", "label": "P99 Latency"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "API Gateway Latency",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "label": "Milliseconds"
+                  }
+                },
+                "dimensions": {
+                  "ApiName": "${ApiGatewayId}"
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", {"stat": "Sum", "label": "Invocations"}],
+                  [".", "Errors", {"stat": "Sum", "label": "Errors"}],
+                  [".", "Throttles", {"stat": "Sum", "label": "Throttles"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Lambda Authorizer Invocations",
+                "period": 300,
+                "dimensions": {
+                  "FunctionName": "${AuthorizerFunctionName}"
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/Lambda", "Duration", {"stat": "Average", "label": "Avg Duration"}],
+                  ["...", {"stat": "Maximum", "label": "Max Duration"}]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Lambda Authorizer Duration",
+                "period": 300,
+                "yAxis": {
+                  "left": {
+                    "label": "Milliseconds"
+                  }
+                },
+                "dimensions": {
+                  "FunctionName": "${AuthorizerFunctionName}"
+                }
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/lambda/${AuthorizerFunctionName}'\n| fields @timestamp, @message\n| filter @message like /Authentication successful/\n| stats count() as SuccessCount by bin(5m)",
+                "region": "${AWS::Region}",
+                "title": "Authentication Success Trend",
+                "stacked": false,
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "log",
+              "x": 12,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/lambda/${AuthorizerFunctionName}'\n| fields @timestamp, @message\n| filter @message like /Authentication failed/ or @message like /Token validation failed/\n| stats count() as FailureCount by bin(5m)",
+                "region": "${AWS::Region}",
+                "title": "Authentication Failure Trend",
+                "stacked": false,
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 18,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/lambda/${AuthorizerFunctionName}'\n| fields @timestamp, @message\n| filter @message like /Authorization: Allow/\n| stats count() as AllowCount by bin(5m)",
+                "region": "${AWS::Region}",
+                "title": "Authorization Allow Trend",
+                "stacked": false,
+                "view": "timeSeries"
+              }
+            },
+            {
+              "type": "log",
+              "x": 12,
+              "y": 18,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/lambda/${AuthorizerFunctionName}'\n| fields @timestamp, @message\n| filter @message like /Authorization: Deny/\n| stats count() as DenyCount by bin(5m)",
+                "region": "${AWS::Region}",
+                "title": "Authorization Deny Trend",
+                "stacked": false,
+                "view": "timeSeries"
+              }
+            }
+          ]
+        }
+
+  # ----------------------------------------------------------------------------
+  # CloudWatch Log Metric Filters
+  # ----------------------------------------------------------------------------
+  
+  # Metric filter for authentication failures
+  # Tracks failed authentication attempts for security monitoring
+  AuthenticationFailureMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      FilterName: !Sub '${Environment}-auth-failures-${DeploymentSuffix}'
+      FilterPattern: '[timestamp, request_id, level, msg="Authentication failed*"]'
+      LogGroupName: !Sub '/aws/lambda/${AuthorizerFunctionName}'
+      MetricTransformations:
+        - MetricName: AuthenticationFailures
+          MetricNamespace: !Sub '${Environment}/OrdersAPI'
+          MetricValue: '1'
+          DefaultValue: 0
+          Unit: Count
+
+  # Metric filter for authorization errors
+  # Tracks authorization processing errors (not denials, but actual errors)
+  AuthorizationErrorMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      FilterName: !Sub '${Environment}-auth-errors-${DeploymentSuffix}'
+      FilterPattern: '[timestamp, request_id, level=ERROR, msg="Authorization error*"]'
+      LogGroupName: !Sub '/aws/lambda/${AuthorizerFunctionName}'
+      MetricTransformations:
+        - MetricName: AuthorizationErrors
+          MetricNamespace: !Sub '${Environment}/OrdersAPI'
+          MetricValue: '1'
+          DefaultValue: 0
+          Unit: Count
+
+  # Metric filter for authorization denials
+  # Tracks legitimate authorization denials (user lacks permissions)
+  AuthorizationDenialMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      FilterName: !Sub '${Environment}-auth-denials-${DeploymentSuffix}'
+      FilterPattern: '[timestamp, request_id, level, msg="Authorization: Deny*"]'
+      LogGroupName: !Sub '/aws/lambda/${AuthorizerFunctionName}'
+      MetricTransformations:
+        - MetricName: AuthorizationDenials
+          MetricNamespace: !Sub '${Environment}/OrdersAPI'
+          MetricValue: '1'
+          DefaultValue: 0
+          Unit: Count
+
+  # ----------------------------------------------------------------------------
+  # CloudWatch Alarms
+  # ----------------------------------------------------------------------------
+  
+  # Alarm for high authentication failures
+  # Triggers when >10 authentication failures occur in 5 minutes
+  # Could indicate brute force attack or misconfigured client
+  HighAuthenticationFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-high-auth-failures-${DeploymentSuffix}'
+      AlarmDescription: 'High number of authentication failures detected (>10 in 5 minutes)'
+      MetricName: AuthenticationFailures
+      Namespace: !Sub '${Environment}/OrdersAPI'
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [HasSnsTopicArn, !Ref SnsTopicArn, !Ref 'AWS::NoValue']
+
+  # Alarm for authorization errors
+  # Triggers when >5 authorization errors occur in 5 minutes
+  # Indicates bugs in authorization logic or Lambda function issues
+  AuthorizationErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-authorization-errors-${DeploymentSuffix}'
+      AlarmDescription: 'Authorization processing errors detected (>5 in 5 minutes)'
+      MetricName: AuthorizationErrors
+      Namespace: !Sub '${Environment}/OrdersAPI'
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [HasSnsTopicArn, !Ref SnsTopicArn, !Ref 'AWS::NoValue']
+
+  # Alarm for Lambda function errors
+  # Triggers when >5 Lambda errors occur in 5 minutes
+  # Indicates runtime errors, timeouts, or resource issues
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-lambda-authorizer-errors-${DeploymentSuffix}'
+      AlarmDescription: 'Lambda authorizer errors detected (>5 in 5 minutes)'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AuthorizerFunctionName
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [HasSnsTopicArn, !Ref SnsTopicArn, !Ref 'AWS::NoValue']
+
+  # Alarm for unusual access patterns
+  # Triggers when >20 authorization denials occur in 10 minutes
+  # Could indicate unauthorized access attempts or misconfigured permissions
+  UnusualAccessPatternsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-unusual-access-patterns-${DeploymentSuffix}'
+      AlarmDescription: 'Unusual access patterns detected (>20 denials in 10 minutes)'
+      MetricName: AuthorizationDenials
+      Namespace: !Sub '${Environment}/OrdersAPI'
+      Statistic: Sum
+      Period: 600  # 10 minutes
+      EvaluationPeriods: 1
+      Threshold: 20
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [HasSnsTopicArn, !Ref SnsTopicArn, !Ref 'AWS::NoValue']
+
+  # Alarm for Lambda throttles
+  # Triggers when >1 throttle occurs in 5 minutes
+  # Indicates Lambda concurrency limits reached - may need reserved concurrency
+  LambdaThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-lambda-authorizer-throttles-${DeploymentSuffix}'
+      AlarmDescription: 'Lambda authorizer throttles detected (>1 in 5 minutes)'
+      MetricName: Throttles
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AuthorizerFunctionName
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !If [HasSnsTopicArn, !Ref SnsTopicArn, !Ref 'AWS::NoValue']
+
+# ==============================================================================
+# OUTPUTS
+# ==============================================================================
+Outputs:
+  DashboardName:
+    Description: CloudWatch Dashboard Name
+    Value: !Ref OrdersApiDashboard
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardName'
+
+  DashboardUrl:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${OrdersApiDashboard}'
+
+  AuthFailuresAlarmArn:
+    Description: High Authentication Failures Alarm ARN
+    Value: !GetAtt HighAuthenticationFailuresAlarm.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AuthFailuresAlarmArn'
+
+  AuthErrorsAlarmArn:
+    Description: Authorization Errors Alarm ARN
+    Value: !GetAtt AuthorizationErrorsAlarm.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AuthErrorsAlarmArn'
+
+  LambdaErrorsAlarmArn:
+    Description: Lambda Errors Alarm ARN
+    Value: !GetAtt LambdaErrorsAlarm.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaErrorsAlarmArn'
+
+  UnusualAccessAlarmArn:
+    Description: Unusual Access Patterns Alarm ARN
+    Value: !GetAtt UnusualAccessPatternsAlarm.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-UnusualAccessAlarmArn'
+
+  ThrottlesAlarmArn:
+    Description: Lambda Throttles Alarm ARN
+    Value: !GetAtt LambdaThrottlesAlarm.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ThrottlesAlarmArn'

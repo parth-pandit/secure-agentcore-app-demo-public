@@ -1,0 +1,436 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Parent CloudFormation template for Orders API infrastructure with nested stacks'
+
+# ============================================================================
+# PARAMETERS
+# ============================================================================
+# All parameters with sensible defaults where possible. Sensitive parameters
+# (IDP credentials) require explicit values for security.
+# ============================================================================
+
+Parameters:
+  # Environment Configuration
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name for resource tagging and configuration
+  
+  # S3 Configuration
+  # Templates bucket stores child CloudFormation templates
+  TemplatesBucket:
+    Type: String
+    Description: S3 bucket containing child CloudFormation templates
+    MinLength: 3
+    MaxLength: 63
+  
+  # Lambda code bucket stores deployment packages for all Lambda functions
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment packages
+    MinLength: 3
+    MaxLength: 63
+  
+  # Identity Provider Configuration (Required - No Defaults for Security)
+  # These parameters configure OAuth2/OIDC authentication for the gateway
+  IdpDiscoveryUrl:
+    Type: String
+    Description: Identity Provider Discovery URL (e.g., https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration)
+    MinLength: 10
+    ConstraintDescription: Must be a valid HTTPS URL
+  
+  GatewayIdpClientId:
+    Type: String
+    Description: Gateway IDP Client ID for OAuth2 authentication
+    MinLength: 3
+    ConstraintDescription: Must be at least 3 characters
+  
+  AgentIdpClientId:
+    Type: String
+    Description: Agent IDP Client ID for OAuth2 authentication
+    MinLength: 3
+    ConstraintDescription: Must be at least 3 characters
+  
+  TargetIdpClientId:
+    Type: String
+    Description: Target IDP Client ID for OAuth2 authentication
+    MinLength: 3
+    ConstraintDescription: Must be at least 3 characters
+  
+  # NoEcho prevents this value from being displayed in console/CLI output
+  TargetIdpClientSecret:
+    Type: String
+    Description: Target IDP Client Secret for OAuth2 authentication
+    NoEcho: true
+    MinLength: 3
+    ConstraintDescription: Must be at least 3 characters
+  
+  TargetIdpTenantId:
+    Type: String
+    Description: Target IDP Tenant ID (for Microsoft Azure AD)
+    MinLength: 3
+    ConstraintDescription: Must be at least 3 characters
+  
+  # JWT Authorizer Configuration
+  # These parameters configure the custom JWT authorizer for API Gateway
+  JwksUrl:
+    Type: String
+    Description: JWKS URL for JWT token validation (e.g., https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys)
+    MinLength: 10
+    ConstraintDescription: Must be a valid HTTPS URL
+  
+  TokenIssuer:
+    Type: String
+    Description: Expected JWT token issuer (e.g., https://login.microsoftonline.com/{tenant}/v2.0)
+    MinLength: 10
+    ConstraintDescription: Must be a valid HTTPS URL
+  
+  TokenAudience:
+    Type: String
+    Description: Expected JWT token audience (typically the application client ID)
+    MinLength: 3
+    ConstraintDescription: Must be at least 3 characters
+  
+  # Authorized users configuration as JSON string
+  # Format: {"user@example.com":{"permissions":["GET","POST","PUT"],"resources":["*"]}}
+  AuthorizedUsers:
+    Type: String
+    Description: JSON configuration of authorized users with permissions
+    Default: '{}'
+  
+  # AWS Bedrock Configuration
+  # Default model is Claude Sonnet 4.5 in us-west-2 region
+  BedrockModelId:
+    Type: String
+    Default: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+    Description: AWS Bedrock model ID for AI agent runtime
+  
+  # Logging Configuration
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues:
+      - DEBUG
+      - INFO
+      - WARNING
+      - ERROR
+    Description: Log level for Lambda functions and agent runtime
+  
+  # CloudFront Configuration
+  # PriceClass_100 = North America & Europe (lowest cost)
+  # PriceClass_200 = + Asia, Middle East, Africa
+  # PriceClass_All = All edge locations (highest performance)
+  CloudFrontPriceClass:
+    Type: String
+    Default: PriceClass_100
+    AllowedValues:
+      - PriceClass_100
+      - PriceClass_200
+      - PriceClass_All
+    Description: CloudFront distribution price class for cost optimization
+  
+  # Optional SSL certificate ARN for custom domain on CloudFront
+  # Leave empty to use default CloudFront certificate
+  SslCertificateArn:
+    Type: String
+    Default: ''
+    Description: Optional ACM certificate ARN for CloudFront custom domain (must be in us-east-1)
+  
+  # Optional SNS topic ARN for CloudWatch alarm notifications
+  # Leave empty to disable alarm notifications
+  SnsTopicArn:
+    Type: String
+    Default: ''
+    Description: Optional SNS topic ARN for CloudWatch alarm notifications
+
+  DeploymentSuffix:
+    Type: String
+    Default: ''
+    Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
+
+# ============================================================================
+# RESOURCES - NESTED STACKS
+# ============================================================================
+# Each nested stack represents a logical component of the infrastructure.
+# Dependencies are managed via DependsOn to ensure correct deployment order.
+# ============================================================================
+
+Resources:
+  # Backend API Stack
+  # Contains: DynamoDB table, Lambda functions, API Gateway, JWT authorizer
+  # Dependencies: None (deployed first)
+  BackendAPIStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      # Template URL must be accessible via HTTPS from S3
+      TemplateURL: !Sub 'https://${TemplatesBucket}.s3.${AWS::Region}.amazonaws.com/templates/backend-api-stack.yaml'
+      
+      # Pass required parameters to child stack
+      Parameters:
+        Environment: !Ref Environment
+        LambdaCodeBucket: !Ref LambdaCodeBucket
+        JwksUrl: !Ref JwksUrl
+        TokenIssuer: !Ref TokenIssuer
+        TokenAudience: !Ref TokenAudience
+        AuthorizedUsers: !Ref AuthorizedUsers
+        DeploymentSuffix: !Ref DeploymentSuffix
+      
+      # Tags for cost allocation and resource management
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: OrdersAPI
+      
+      # Timeout for stack creation/update (default: no timeout)
+      # Set to 30 minutes to allow for API Gateway deployment
+      TimeoutInMinutes: 30
+  
+  # AgentCore App Stack
+  # Contains: Bedrock AgentCore Gateway, OAuth2 provider, Runtime, Target,
+  #           Agent Proxy Lambda, OAuth Callback Lambda
+  # Dependencies: BackendAPIStack (requires API URL)
+  AgentCoreAppStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: BackendAPIStack
+    Properties:
+      # Template URL must be accessible via HTTPS from S3
+      TemplateURL: !Sub 'https://${TemplatesBucket}.s3.${AWS::Region}.amazonaws.com/templates/agentcore-app-stack.yaml'
+      
+      # Pass required parameters to child stack
+      Parameters:
+        Environment: !Ref Environment
+        IdpDiscoveryUrl: !Ref IdpDiscoveryUrl
+        GatewayIdpClientId: !Ref GatewayIdpClientId
+        AgentIdpClientId: !Ref AgentIdpClientId
+        TargetIdpClientId: !Ref TargetIdpClientId
+        TargetIdpClientSecret: !Ref TargetIdpClientSecret
+        TargetIdpTenantId: !Ref TargetIdpTenantId
+        BedrockModelId: !Ref BedrockModelId
+        LogLevel: !Ref LogLevel
+        S3Bucket: !Ref LambdaCodeBucket
+        # Cross-stack reference: Get API URL from Backend API Stack
+        ApiUrl: !GetAtt BackendAPIStack.Outputs.ApiUrl
+        DeploymentSuffix: !Ref DeploymentSuffix
+      
+      # Tags for cost allocation and resource management
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: AgentCore
+      
+      # Timeout for stack creation/update
+      # Set to 60 minutes to allow for AgentCore + Lambda resource provisioning
+      TimeoutInMinutes: 60
+  
+  # Frontend Stack
+  # Contains: S3 bucket for static hosting, CloudFront distribution
+  # Dependencies: None (can deploy in parallel with other stacks)
+  FrontendStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      # Template URL must be accessible via HTTPS from S3
+      TemplateURL: !Sub 'https://${TemplatesBucket}.s3.${AWS::Region}.amazonaws.com/templates/frontend-stack.yaml'
+      
+      # Pass required parameters to child stack
+      Parameters:
+        Environment: !Ref Environment
+        BucketName: !Sub '${Environment}-frontend-${AWS::AccountId}-${DeploymentSuffix}'
+        CloudFrontPriceClass: !Ref CloudFrontPriceClass
+        SslCertificateArn: !Ref SslCertificateArn
+        DeploymentSuffix: !Ref DeploymentSuffix
+      
+      # Tags for cost allocation and resource management
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: Frontend
+      
+      # Timeout for stack creation/update
+      # Set to 30 minutes to allow for CloudFront distribution creation
+      TimeoutInMinutes: 30
+  
+  # Monitoring Stack
+  # Contains: CloudWatch dashboards, alarms, log metric filters
+  # Dependencies: BackendAPIStack (requires API Gateway ID and authorizer function name)
+  MonitoringStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: BackendAPIStack
+    Properties:
+      # Template URL must be accessible via HTTPS from S3
+      TemplateURL: !Sub 'https://${TemplatesBucket}.s3.${AWS::Region}.amazonaws.com/templates/monitoring-stack.yaml'
+      
+      # Pass required parameters to child stack
+      Parameters:
+        Environment: !Ref Environment
+        # Cross-stack references: Get API Gateway ID and authorizer function name from Backend API Stack
+        ApiGatewayId: !GetAtt BackendAPIStack.Outputs.ApiGatewayId
+        AuthorizerFunctionName: !GetAtt BackendAPIStack.Outputs.AuthorizerFunctionName
+        SnsTopicArn: !Ref SnsTopicArn
+        DeploymentSuffix: !Ref DeploymentSuffix
+      
+      # Tags for cost allocation and resource management
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: Monitoring
+      
+      # Timeout for stack creation/update
+      # Set to 15 minutes for CloudWatch resource creation
+      TimeoutInMinutes: 15
+
+Outputs:
+  # ============================================================================
+  # PARENT STACK INFORMATION
+  # ============================================================================
+  
+  # Stack Information
+  StackName:
+    Description: Parent stack name
+    Value: !Ref AWS::StackName
+  
+  StackId:
+    Description: Parent stack ID
+    Value: !Ref AWS::StackId
+  
+  Region:
+    Description: AWS Region where stack is deployed
+    Value: !Ref AWS::Region
+  
+  Environment:
+    Description: Environment name (dev/staging/prod)
+    Value: !Ref Environment
+  
+  # ============================================================================
+  # BACKEND API STACK OUTPUTS
+  # ============================================================================
+  # Outputs from the Orders API backend infrastructure
+  
+  ApiUrl:
+    Description: Orders API Gateway URL
+    Value: !GetAtt BackendAPIStack.Outputs.ApiUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiUrl'
+  
+  ApiGatewayId:
+    Description: API Gateway REST API ID
+    Value: !GetAtt BackendAPIStack.Outputs.ApiGatewayId
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayId'
+  
+  DynamoDBTableName:
+    Description: DynamoDB table name for orders
+    Value: !GetAtt BackendAPIStack.Outputs.DynamoDBTableName
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDBTableName'
+  
+  # ============================================================================
+  # AGENTCORE APP STACK OUTPUTS
+  # ============================================================================
+  # Outputs from the AWS Bedrock AgentCore infrastructure and Agent App
+  
+  GatewayUrl:
+    Description: AgentCore Gateway URL for MCP protocol access
+    Value: !GetAtt AgentCoreAppStack.Outputs.GatewayUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-GatewayUrl'
+  
+  GatewayId:
+    Description: AgentCore Gateway ID
+    Value: !GetAtt AgentCoreAppStack.Outputs.GatewayId
+    Export:
+      Name: !Sub '${AWS::StackName}-GatewayId'
+  
+  AgentRuntimeId:
+    Description: AgentCore Runtime ID
+    Value: !GetAtt AgentCoreAppStack.Outputs.AgentRuntimeId
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentRuntimeId'
+  
+  AgentRuntimeArn:
+    Description: AgentCore Runtime ARN for invocation
+    Value: !GetAtt AgentCoreAppStack.Outputs.AgentRuntimeArn
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentRuntimeArn'
+  
+  AgentProxyFunctionArn:
+    Description: Agent Proxy Lambda Function ARN
+    Value: !GetAtt AgentCoreAppStack.Outputs.AgentProxyFunctionArn
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentProxyFunctionArn'
+  
+  AgentProxyFunctionName:
+    Description: Agent Proxy Lambda Function Name
+    Value: !GetAtt AgentCoreAppStack.Outputs.AgentProxyFunctionName
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentProxyFunctionName'
+
+  AgentProxyFunctionUrl:
+    Description: Agent Proxy Lambda Function URL (use this as AGENTCORE_ENDPOINT in frontend)
+    Value: !GetAtt AgentCoreAppStack.Outputs.AgentProxyUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentProxyFunctionUrl'
+  
+  OAuthCallbackUrl:
+    Description: OAuth Callback Lambda Function URL for OAuth2 flow
+    Value: !GetAtt AgentCoreAppStack.Outputs.OAuthCallbackUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-OAuthCallbackUrl'
+
+  CredentialProviderArn:
+    Description: OAuth2 Credential Provider ARN (used by deploy script to refresh Gateway Target)
+    Value: !GetAtt AgentCoreAppStack.Outputs.CredentialProviderArn
+    Export:
+      Name: !Sub '${AWS::StackName}-CredentialProviderArn'
+  
+  # ============================================================================
+  # FRONTEND STACK OUTPUTS
+  # ============================================================================
+  # Outputs from the static website hosting infrastructure
+  
+  CloudFrontDomainName:
+    Description: CloudFront Distribution Domain Name (use this URL to access the frontend)
+    Value: !GetAtt FrontendStack.Outputs.CloudFrontDomainName
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontDomainName'
+  
+  CloudFrontDistributionId:
+    Description: CloudFront Distribution ID (for cache invalidation)
+    Value: !GetAtt FrontendStack.Outputs.CloudFrontDistributionId
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontDistributionId'
+  
+  S3BucketName:
+    Description: Frontend S3 Bucket Name (upload static files here)
+    Value: !GetAtt FrontendStack.Outputs.S3BucketName
+    Export:
+      Name: !Sub '${AWS::StackName}-S3BucketName'
+  
+  # ============================================================================
+  # MONITORING STACK OUTPUTS
+  # ============================================================================
+  # Outputs from the observability infrastructure
+  
+  DashboardName:
+    Description: CloudWatch Dashboard Name (view in CloudWatch console)
+    Value: !GetAtt MonitoringStack.Outputs.DashboardName
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardName'
+  
+  DashboardUrl:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${MonitoringStack.Outputs.DashboardName}'

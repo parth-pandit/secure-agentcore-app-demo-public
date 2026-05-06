@@ -321,7 +321,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Step 1: Validate token and extract claims
         try:
             claims = validate_token(token)
-            user_email = claims.get('email')
+            # Use preferred_username (Azure AD UPN) as the primary identity claim.
+            # Fall back to upn, then email if preferred_username is not present.
+            user_email = (
+                claims.get('preferred_username')
+                or claims.get('upn')
+                or claims.get('email')
+            )
             
             if not user_email:
                 logger.error("Token missing email claim")
