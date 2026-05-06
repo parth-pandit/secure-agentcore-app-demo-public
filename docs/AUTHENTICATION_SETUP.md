@@ -125,25 +125,27 @@ You should see a JSON response with public keys.
 
 ### Update CloudFormation Stack
 
-Deploy the stack with Azure Entra ID parameters:
+Deploy the stack using the deployment script with your Azure Entra ID parameters in the environment parameter file:
 
 ```bash
-./infrastructure/scripts/deploy-stack.sh \
-  secure-agentcore-app \
-  your-s3-bucket \
-  dev \
-  "https://login.microsoftonline.com/<TENANT_ID>/discovery/v2.0/keys" \
-  "https://login.microsoftonline.com/<TENANT_ID>/v2.0" \
-  "<APPLICATION_ID>" \
-  '{"user@yourdomain.com":{"permissions":["GET","POST","PUT"],"resources":["*"]}}'
+# Fill in infrastructure/cloudformation/parameters/dev-parameters.json with your values, then:
+bash infrastructure/cloudformation/scripts/deploy-stack.sh \
+  secure-agentcore-app-dev-<suffix> \
+  your-cfn-templates-bucket \
+  your-lambda-code-bucket \
+  --profile your-aws-profile \
+  --environment dev \
+  --region us-west-2
 ```
+
+See the root `README.md` for full deployment instructions.
 
 ### Parameters Explained
 
-- **JWKS URL**: URL to fetch public keys for token verification from Azure Entra ID
-- **Token Issuer**: Expected issuer claim in JWT tokens (Azure Entra ID issuer)
-- **Token Audience**: Expected audience claim (your Azure Application ID)
-- **Authorized Users**: JSON configuration of users and their permissions
+- **JwksUrl**: URL to fetch public keys for token verification from Azure Entra ID
+- **TokenIssuer**: Expected issuer claim in JWT tokens (Azure Entra ID issuer)
+- **TokenAudience**: Expected audience claim (your Azure Application ID)
+- **AuthorizedUsers**: JSON configuration of users and their permissions (in `dev-parameters.json`)
 
 ## Obtaining Access Tokens
 

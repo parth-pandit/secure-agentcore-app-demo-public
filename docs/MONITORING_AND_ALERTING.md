@@ -10,20 +10,27 @@ The monitoring system provides visibility into:
 - System errors and performance
 - Unusual access patterns
 
-## CloudWatch Dashboard
+## CloudWatch Dashboard and Alarms
 
-### Creating the Dashboard
+The monitoring infrastructure (CloudWatch dashboard, alarms, and log metric filters) is deployed automatically as part of the CloudFormation stack via `infrastructure/cloudformation/templates/monitoring-stack.yaml`.
 
-The CloudWatch dashboard provides a comprehensive view of authentication and authorization metrics.
+To deploy or update monitoring resources, redeploy the stack:
 
 ```bash
-# Create the dashboard
-python infrastructure/monitoring/create_dashboard.py \
-  --stack-name dev-orders-api \
-  --region us-west-2 \
-  --api-id <your-api-id> \
-  --authorizer-function-name dev-orders-api-authorizer
+bash infrastructure/cloudformation/scripts/deploy-stack.sh \
+  secure-agentcore-app-dev-<suffix> \
+  your-cfn-templates-bucket \
+  your-lambda-code-bucket \
+  --profile your-aws-profile \
+  --environment dev \
+  --region us-west-2
 ```
+
+The monitoring stack creates:
+- A CloudWatch dashboard with API Gateway and Lambda authorizer metrics
+- 3 log metric filters (authentication failures, authorization errors, authorization denials)
+- 5 CloudWatch alarms (high auth failures, authorization errors, Lambda errors, unusual access patterns, Lambda throttles)
+- Optional SNS notifications (configure `SnsTopicArn` in your parameters file)
 
 ### Dashboard Widgets
 
@@ -83,17 +90,6 @@ The dashboard includes the following widgets:
 - **Limit**: Last 20 entries
 
 ## CloudWatch Alarms
-
-### Creating Alarms
-
-```bash
-# Create all alarms
-python infrastructure/monitoring/create_alarms.py \
-  --stack-name dev-orders-api \
-  --region us-west-2 \
-  --authorizer-function-name dev-orders-api-authorizer \
-  --sns-topic-arn arn:aws:sns:us-west-2:123456789012:security-alerts
-```
 
 ### Alarm Definitions
 

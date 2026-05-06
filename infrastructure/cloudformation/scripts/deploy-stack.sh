@@ -593,7 +593,7 @@ print(params.get('TargetIdpClientId',''))
                 --target-id "${TARGET_ID}" \
                 --name "${ENVIRONMENT}-orders-api-target-${DEPLOY_SUFFIX}" \
                 --target-configuration "{\"mcp\":{\"openApiSchema\":{\"s3\":{\"uri\":\"s3://${LAMBDA_BUCKET}/openapi-schema.yaml\"}}}}" \
-                --credential-provider-configurations "[{\"credentialProviderType\":\"OAUTH\",\"credentialProvider\":{\"oauthCredentialProvider\":{\"providerArn\":\"${OAUTH_PROVIDER_ARN}\",\"grantType\":\"AUTHORIZATION_CODE\",\"defaultReturnUrl\":\"${OAUTH_CALLBACK_URL%/callback}/oauth2/callback\",\"scopes\":[\"${TARGET_IDP_CLIENT_ID}/.default\"]}}}]" \
+                --credential-provider-configurations "[{\"credentialProviderType\":\"OAUTH\",\"credentialProvider\":{\"oauthCredentialProvider\":{\"providerArn\":\"${OAUTH_PROVIDER_ARN}\",\"grantType\":\"AUTHORIZATION_CODE\",\"defaultReturnUrl\":\"${OAUTH_CALLBACK_URL}\",\"scopes\":[\"${TARGET_IDP_CLIENT_ID}/.default\"]}}}]" \
                 --no-cli-pager \
                 ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>&1 \
                 && log_success "Gateway Target refreshed with updated OpenAPI schema" \

@@ -4,13 +4,12 @@ This directory contains CloudFormation templates for deploying the complete appl
 
 ## Architecture Overview
 
-The infrastructure is organized into **1 parent template** that orchestrates **5 child templates** (nested stacks):
+The infrastructure is organized into **1 parent template** that orchestrates **4 child templates** (nested stacks):
 
 ```
 Parent Template (parent.yaml)
 ├── Backend API Stack (backend-api-stack.yaml)
-├── AgentCore Stack (agentcore-stack.yaml)
-├── Agent App Stack (agent-app-stack.yaml)
+├── AgentCore App Stack (agentcore-app-stack.yaml)
 ├── Frontend Stack (frontend-stack.yaml)
 └── Monitoring Stack (monitoring-stack.yaml)
 ```
@@ -64,9 +63,9 @@ Parent Template (parent.yaml)
 - DynamoDBTableName
 - DynamoDBTableArn
 
-### Child Template 2: `agentcore-stack.yaml`
+### Child Template 2: `agentcore-app-stack.yaml`
 
-**Purpose**: Deploy AWS Bedrock AgentCore components (Gateway, Identity, Runtime, Target).
+**Purpose**: Deploy all AgentCore and agent application components in a single stack.
 
 **Resources**:
 - IAM roles for Gateway and Runtime
@@ -74,41 +73,22 @@ Parent Template (parent.yaml)
 - OAuth2 credential provider (Microsoft OAuth2)
 - Gateway Target with OpenAPI schema from S3
 - AgentCore Runtime with Python 3.12 and Strands agent
-- Default endpoint with PUBLIC network mode
+- Agent Proxy Lambda (invokes AgentCore Runtime)
+- OAuth Callback Lambda with DynamoDB token storage
+- HTTP API Gateway (fronts Agent Proxy and OAuth Callback)
+- DynamoDB table for OAuth token storage
 
-**Dependencies**: 
+**Dependencies**:
 - Backend API Stack (requires API URL)
 
 **Exports**:
-- GatewayId
-- GatewayUrl
-- GatewayRoleArn
-- CredentialProviderArn
-- CallbackUrl
-- TargetId
-- AgentRuntimeId
-- AgentRuntimeArn
+- GatewayId, GatewayUrl, GatewayRoleArn
+- CredentialProviderArn, CallbackUrl, TargetId
+- AgentRuntimeId, AgentRuntimeArn
+- AgentProxyFunctionArn, AgentProxyFunctionUrl
+- OAuthCallbackUrl, ApiGatewayId
 
-### Child Template 3: `agent-app-stack.yaml`
-
-**Purpose**: Deploy AI agent application components (Proxy Lambda, OAuth Callback Lambda).
-
-**Resources**:
-- IAM roles for both Lambda functions
-- Agent Proxy Lambda (invokes AgentCore Runtime)
-- OAuth Callback Lambda with function URL
-- Lambda permissions for invocation
-
-**Dependencies**: 
-- AgentCore Stack (requires Agent Runtime ARN)
-
-**Exports**:
-- AgentProxyFunctionArn
-- AgentProxyFunctionName
-- OAuthCallbackFunctionArn
-- OAuthCallbackUrl
-
-### Child Template 4: `frontend-stack.yaml`
+### Child Template 3: `frontend-stack.yaml`
 
 **Purpose**: Deploy static website hosting infrastructure (S3 + CloudFront).
 
@@ -126,7 +106,7 @@ Parent Template (parent.yaml)
 - CloudFrontDistributionId
 - CloudFrontDomainName
 
-### Child Template 5: `monitoring-stack.yaml`
+### Child Template 4: `monitoring-stack.yaml`
 
 **Purpose**: Deploy CloudWatch dashboards, alarms, and log metric filters.
 
@@ -154,13 +134,11 @@ The deployment order is enforced through `DependsOn` attributes:
 ```
 1. Backend API Stack (no dependencies)
    ↓
-2. AgentCore Stack (depends on: Backend API Stack)
+2. AgentCore App Stack (depends on: Backend API Stack)
    ↓
-3. Agent App Stack (depends on: AgentCore Stack)
+3. Frontend Stack (no dependencies, deploys in parallel)
    ↓
-4. Frontend Stack (no dependencies, deploys in parallel)
-   ↓
-5. Monitoring Stack (depends on: Backend API Stack)
+4. Monitoring Stack (depends on: Backend API Stack)
 ```
 
 ## Deployment Workflow
@@ -248,15 +226,12 @@ These must be provided for each environment:
 
 Child stacks export outputs that are referenced by other stacks:
 
-### Backend API Stack → AgentCore Stack
-- `ApiUrl` - Used to configure AgentCore Gateway Target
-
-### AgentCore Stack → Agent App Stack
-- `AgentRuntimeArn` - Used by Agent Proxy Lambda to invoke runtime
+### Backend API Stack → AgentCore App Stack
+- `ApiUrl` — Used to configure AgentCore Gateway Target
 
 ### Backend API Stack → Monitoring Stack
-- `ApiGatewayId` - Used for API Gateway metrics
-- `AuthorizerFunctionName` - Used for Lambda authorizer metrics
+- `ApiGatewayId` — Used for API Gateway metrics
+- `AuthorizerFunctionName` — Used for Lambda authorizer metrics
 
 ## Resource Tagging
 
@@ -374,9 +349,8 @@ See `../docs/MIGRATION_GUIDE.md` for detailed migration procedures including:
 
 ## Additional Documentation
 
-- `../docs/IAM_PERMISSIONS.md` - Required IAM permissions for deployment
-- `../docs/COST_ESTIMATION.md` - Detailed cost analysis and optimization
-- `../docs/MIGRATION_GUIDE.md` - Migration strategy and procedures
+- Root `README.md` — Full deployment guide, prerequisites, and architecture overview
+- `../parameters/*.json.template` — Parameter file templates for each environment
 
 ## Support
 

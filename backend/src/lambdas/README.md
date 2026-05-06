@@ -59,7 +59,7 @@ Python Lambda functions for managing orders in DynamoDB table `dev-orders-table`
 
 ### Lambda Configuration
 Each Lambda function requires:
-- **Runtime:** Python 3.9 or higher
+- **Runtime:** Python 3.12
 - **Handler:** `<filename>.lambda_handler`
 - **Timeout:** 30 seconds (recommended)
 - **Memory:** 256 MB (recommended)
