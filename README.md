@@ -34,6 +34,10 @@ This project demonstrates a production-grade pattern for building secure agentic
 
 ## Architecture
 
+![Architecture Diagram](./assets/architecture.png)
+
+### Architecture flow description
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              User Browser                                   │
@@ -55,8 +59,8 @@ This project demonstrates a production-grade pattern for building secure agentic
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                      AWS Bedrock AgentCore Runtime                          │
-│         order_agent.py (Strands Agent + Claude Sonnet 4.5)                  │
-│         Loads MCP tools from Gateway, handles OAuth flow                    │
+│           order_agent.py (Strands Agent + Claude Sonnet 4.5)                │
+│            Loads MCP tools from Gateway, handles OAuth flow                 │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │ MCP (JSON-RPC over HTTPS)
                                    ▼
@@ -70,9 +74,9 @@ This project demonstrates a production-grade pattern for building secure agentic
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    API Gateway → Orders API Lambdas                         │
-│         get_orders / create_order / update_order                            │
-│         Custom JWT authorizer (Azure Entra ID)                              │
-│         DynamoDB (orders table)                                             │
+│                get_orders / create_order / update_order                     │
+│                 Custom JWT authorizer (Azure Entra ID)                      │
+│                       DynamoDB (orders table)                               │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 OAuth2 Callback Flow (3-legged):
