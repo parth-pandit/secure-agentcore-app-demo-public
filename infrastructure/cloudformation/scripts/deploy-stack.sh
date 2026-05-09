@@ -21,6 +21,7 @@
 #   --profile         AWS CLI profile to use (default: uses AWS_PROFILE env var or "default")
 #   --region          AWS region to deploy into (e.g. us-west-2, default: profile/env default)
 #   --help            Display this help message
+#   --suffix          Timestamp in yyyymmddHHMM format to maintain uniqueness
 #
 # Examples:
 #   # Deploy to dev environment using default profile
@@ -104,6 +105,7 @@ Options:
   --profile         AWS CLI profile to use (default: AWS_PROFILE env var or "default")
   --region          AWS region to deploy into (e.g. us-west-2, default: profile/env default)
   --help            Display this help message
+  --suffix          Timestamp in yyyymmddHHMM format to maintain uniqueness
 
 Examples:
   # Deploy to dev environment using default profile
