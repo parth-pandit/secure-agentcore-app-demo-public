@@ -1,0 +1,8 @@
+// This file just provides a reference to the policy incorporated in agentcore-app-stack.yaml
+// Changes to this file will not be applied unless the CloudFormation template is not changed.
+// Allow all calls to the tool
+permit (
+    principal,
+    action,
+    resource is AgentCore::Gateway
+);

@@ -1,0 +1,16 @@
+// This file just provides a reference to the policy incorporated in agentcore-app-stack.yaml
+// Changes to this file will not be applied unless the CloudFormation template is not changed.
+// Forbid any quantity updates over 100
+forbid (
+    principal,
+    action in
+        [AgentCore::Action::"{{orders-api-target-name}}___createOrder",
+         AgentCore::Action::"{{orders-api-target-name}}___updateOrder"],
+    resource ==
+        AgentCore::Gateway::"{{agentcore-gateway-arn}}"
+)
+when
+{
+    ((context has input) && ((context.input) has qty)) &&
+    (!(((context.input).qty) < 100))
+};

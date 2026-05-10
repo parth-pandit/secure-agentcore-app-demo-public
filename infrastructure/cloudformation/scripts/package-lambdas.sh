@@ -195,7 +195,7 @@ package_ai_agent_lambda() {
 # The lib/ directory must be pre-built using:
 # uv pip install --python-platform aarch64-manylinux2014 --python-version 3.12 \
 #   --target=ai-agent/src/lib --only-binary=:all: \
-#   "bedrock-agentcore==1.7.0" "strands-agents==1.37.0" "aws-opentelemetry-distro==0.17.0"
+#   "bedrock-agentcore==1.7.0" "strands-agents==1.37.0" "strands-agents-tools" "aws-opentelemetry-distro==0.17.0"
 #
 # Output: order-agent.zip containing:
 #   - order_agent.py (main agent entrypoint)
@@ -229,6 +229,7 @@ package_agentcore_runtime() {
               --only-binary=:all: \
               "bedrock-agentcore==1.7.0" \
               "strands-agents==1.37.0" \
+              "strands-agents-tools" \
               "aws-opentelemetry-distro==0.17.0"
         else
             print_error "uv is required to build the order-agent package. Install with: pip install uv"
