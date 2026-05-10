@@ -85,11 +85,14 @@ Parameters:
 #   1. IAM Roles (no dependencies)
 #   2. OAuthCallbackTable (DynamoDB) ← referenced by OAuthCallbackLambdaRole
 #   3. OAuthCallbackLambda + API Gateway routes ← must exist before AgentCoreRuntime
-#   4. AgentCoreGateway                   ← must exist before AgentCoreRuntime
-#   5. OAuth2CredentialProvider           ← must exist before GatewayTarget
-#   6. GatewayTarget                      ← must exist before AgentCoreRuntime
-#   7. AgentCoreRuntime                   ← references Gateway URL + Callback URL
-#   8. AgentProxyLambda + FunctionUrl     ← depends on AgentCoreRuntime ARN
+#   4. PolicyEngine                       ← no dependencies; created first among AgentCore policy resources
+#   5. AgentCoreGateway                   ← DependsOn: PolicyEngine; must exist before GatewayTarget
+#   6. OAuth2CredentialProvider           ← must exist before GatewayTarget
+#   7. GatewayTarget                      ← DependsOn: [AgentCoreGateway, OAuth2CredentialProvider]; populates Cedar schema
+#   8. PermitPolicy                       ← DependsOn: [PolicyEngine, GatewayTarget]; Cedar schema must be ready
+#   9. ForbidPolicy                       ← DependsOn: [PolicyEngine, AgentCoreGateway, GatewayTarget]; Cedar schema must be ready
+#  10. AgentCoreRuntime                   ← references Gateway URL + Callback URL
+#  11. AgentProxyLambda + FunctionUrl     ← depends on AgentCoreRuntime ARN
 # ============================================================================
 Resources:
 
@@ -344,11 +347,47 @@ Resources:
           Value: AgentApp
 
   # --------------------------------------------------------------------------
+  # POLICY ENGINE — no dependencies; created before AgentCoreGateway and policies
+  # --------------------------------------------------------------------------
+
+  PolicyEngine:
+    Type: AWS::BedrockAgentCore::PolicyEngine
+    Properties:
+      Name: !Sub '${Environment}_orders_gateway_policy_${DeploymentSuffix}'
+      Description: Cedar policy engine for the AgentCore Orders Gateway — evaluates permit and forbid policies on every gateway request
+
+  # --------------------------------------------------------------------------
+  # PERMIT POLICY — DependsOn: GatewayTarget; allows all calls to the gateway.
+  # Must wait for GatewayTarget so the Cedar schema is populated with the
+  # gateway's action/resource types before policy validation runs.
+  # --------------------------------------------------------------------------
+
+  PermitPolicy:
+    Type: AWS::BedrockAgentCore::Policy
+    DependsOn:
+      - PolicyEngine
+      - GatewayTarget
+    Properties:
+      Name: !Sub '${Environment}_permit_orders_policy_${DeploymentSuffix}'
+      PolicyEngineId: !GetAtt PolicyEngine.PolicyEngineId
+      ValidationMode: IGNORE_ALL_FINDINGS
+      Definition:
+        Cedar:
+          Statement: |
+            // Allow all calls to the gateway
+            permit (
+                principal,
+                action,
+                resource is AgentCore::Gateway
+            );
+
+  # --------------------------------------------------------------------------
   # AGENTCORE GATEWAY
   # --------------------------------------------------------------------------
 
   AgentCoreGateway:
     Type: AWS::BedrockAgentCore::Gateway
+    DependsOn: PolicyEngine
     Properties:
       Name: !Sub '${Environment}-orders-gateway-${DeploymentSuffix}'
       Description: AgentCore Gateway for Orders API with MCP protocol and JWT authentication
@@ -368,10 +407,47 @@ Resources:
           # Reference account uses SEMANTIC search
           SearchType: SEMANTIC
       ExceptionLevel: DEBUG
+      PolicyEngineConfiguration:
+        Arn: !GetAtt PolicyEngine.PolicyEngineArn
+        Mode: ENFORCE
       Tags:
         Environment: !Ref Environment
         ManagedBy: CloudFormation
         Project: AgentCore
+
+  # --------------------------------------------------------------------------
+  # FORBID POLICY — DependsOn: [PolicyEngine, AgentCoreGateway, GatewayTarget]; blocks qty >= 100.
+  # Must wait for GatewayTarget so the Cedar schema contains the action
+  # identifiers (target___action) before policy validation runs.
+  # --------------------------------------------------------------------------
+
+  ForbidPolicy:
+    Type: AWS::BedrockAgentCore::Policy
+    DependsOn:
+      - PolicyEngine
+      - AgentCoreGateway
+      - GatewayTarget
+    Properties:
+      Name: !Sub '${Environment}_forbid_orders_policy_${DeploymentSuffix}'
+      PolicyEngineId: !GetAtt PolicyEngine.PolicyEngineId
+      Definition:
+        Cedar:
+          Statement: !Sub |
+            // Forbid any quantity updates over 100
+            forbid (
+                principal,
+                action in
+                    [AgentCore::Action::"${Environment}-orders-api-target-${DeploymentSuffix}___createOrder",
+                     AgentCore::Action::"${Environment}-orders-api-target-${DeploymentSuffix}___updateOrder"],
+                resource ==
+                    AgentCore::Gateway::"${AgentCoreGateway.GatewayArn}"
+            )
+            when
+            {
+                ((context has input) && ((context.input) has qty)) &&
+                (!(((context.input).qty) < 100))
+            };
+      ValidationMode: IGNORE_ALL_FINDINGS
 
   # --------------------------------------------------------------------------
   # OAUTH2 CREDENTIAL PROVIDER

@@ -27,6 +27,7 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from strands import Agent
 from strands.models import BedrockModel
 from strands.tools.tools import PythonAgentTool, normalize_tool_spec
+from strands_tools.current_time import current_time  # Built-in calendar/datetime tool
 
 # ============================================================================
 # Configuration - Environment Variables
@@ -620,8 +621,8 @@ def _register_gateway_tools(tools: list[dict]):
     Register MCP tools with the Strands agent.
     
     Converts MCP tool definitions to Strands PythonAgentTool format:
-    1. Clear existing tools (ensures only MCP tools are available)
-    2. For each tool, create a wrapper function that calls Gateway
+    1. Clear existing tools, then re-register built-in tools (e.g. current_time)
+    2. For each MCP tool, create a wrapper function that calls Gateway
     3. Register tool with agent's tool registry
     
     Args:
@@ -635,6 +636,9 @@ def _register_gateway_tools(tools: list[dict]):
     # Ensure only MCP tools are registered.
     agent = _get_agent()
     agent.tool_registry.registry.clear()
+    
+    # Re-register the calendar tool after clearing (it's always available)
+    agent.tool_registry.register_tool(current_time)
     
     registered_count = 0
     for tool in tools:
@@ -920,6 +924,7 @@ def _get_agent():
                     region_name=AWS_REGION,
                     temperature=TEMPERATURE,
                 ),
+                tools=[current_time],  # Calendar tool for resolving relative date references
                 system_prompt=_get_standard_system_prompt(),
             )
             logger.info("Successfully initialized Strands Agent with a system prompt")
@@ -963,13 +968,20 @@ def _get_standard_system_prompt():
         value
         - Always confirm the changes with the user that you are planning to 
         do using a tool
+        - Always list the orders in a tabular format
+        - Always use the calendar tool reference the time in the user inputs - 
+        e.g. Use the calendar tool for the references like today, tomorrow, 
+        yesterday, one week from now, etc.
 
         - Do not entertain any requests from the user that are not related to 
         either order or inventory management domains.
         - Never update or create more than one order at a time.
         - Never provide order data out of memory as the user might not have 
         required permissions to see the data. Always invoke tools for any 
-        data related query.
+        data related query. 
+        - Never assume things unless there are genuine typos in the request 
+        that you can understand. Otherwise, ask the user to clarify the request 
+        again. 
         </guidelines>
     """
     return system_prompt
