@@ -192,20 +192,31 @@ package_ai_agent_lambda() {
 # Creates deployment package for AWS Bedrock AgentCore Runtime
 # This includes the Strands-based agent code and all dependencies
 #
-# The lib/ directory must be pre-built using:
+# The lib/ directory can be pre-built to speed up packaging (avoids re-downloading
+# large packages like bedrock-agentcore). Build or refresh it with:
 # uv pip install --python-platform aarch64-manylinux2014 --python-version 3.12 \
 #   --target=ai-agent/src/lib --only-binary=:all: \
-#   "bedrock-agentcore==1.7.0" "strands-agents==1.37.0" "strands-agents-tools" "aws-opentelemetry-distro==0.17.0"
+#   -r ai-agent/src/requirements.txt
+#
+# Even when lib/ exists, uv pip install is always run against requirements.txt
+# so that any newly added packages (e.g. strands-agents-tools) are included
+# without needing to manually rebuild lib/.
 #
 # Output: order-agent.zip containing:
 #   - order_agent.py (main agent entrypoint)
-#   - All dependencies from ai-agent/src/lib/
+#   - All dependencies from requirements.txt (lib/ used as base layer)
 ################################################################################
 package_agentcore_runtime() {
     local package_name="order-agent.zip"
     
     print_info "Packaging AgentCore Runtime (order-agent)..."
     
+    # Check uv is available — required for ARM64-compatible dependency installation
+    if ! command -v uv &> /dev/null; then
+        print_error "uv is required to build the order-agent package. Install with: pip install uv"
+        exit 1
+    fi
+
     # Create temporary build directory
     local temp_dir="$BUILD_DIR/order-agent"
     mkdir -p "$temp_dir"
@@ -213,29 +224,27 @@ package_agentcore_runtime() {
     # Copy agent entrypoint
     cp "$AI_AGENT_SRC_DIR/order_agent.py" "$temp_dir/"
     
-    # Copy pre-installed dependencies from ai-agent/src/lib/
-    # These dependencies are already installed and ready to use
-    # This avoids reinstalling large packages like bedrock-agentcore
+    # Step 1: Copy pre-installed lib/ as the base layer (fast, avoids re-downloading
+    # large packages like bedrock-agentcore that rarely change)
     if [ -d "$AI_AGENT_SRC_DIR/lib" ]; then
-        print_info "Copying pre-installed dependencies..."
+        print_info "Copying pre-installed base dependencies from lib/..."
         cp -r "$AI_AGENT_SRC_DIR/lib/"* "$temp_dir/"
     else
-        print_warning "Pre-installed lib directory not found, building with uv..."
-        if command -v uv &> /dev/null; then
-            uv pip install \
-              --python-platform aarch64-manylinux2014 \
-              --python-version 3.12 \
-              --target="$temp_dir" \
-              --only-binary=:all: \
-              "bedrock-agentcore==1.7.0" \
-              "strands-agents==1.37.0" \
-              "strands-agents-tools" \
-              "aws-opentelemetry-distro==0.17.0"
-        else
-            print_error "uv is required to build the order-agent package. Install with: pip install uv"
-            exit 1
-        fi
+        print_warning "Pre-installed lib/ directory not found — all dependencies will be installed via uv"
     fi
+
+    # Step 2: Always run uv pip install on top of whatever is in lib/ to ensure
+    # requirements.txt is fully satisfied, including any newly added packages
+    # (e.g. strands-agents-tools) or version updates since lib/ was last built.
+    # uv skips packages that are already present and up-to-date, so this is fast
+    # when lib/ is mostly current.
+    print_info "Syncing dependencies from requirements.txt (catching any additions/updates)..."
+    uv pip install \
+        --python-platform aarch64-manylinux2014 \
+        --python-version 3.12 \
+        --target="$temp_dir" \
+        --only-binary=:all: \
+        -r "$AI_AGENT_SRC_DIR/requirements.txt"
     
     # Create zip file
     cd "$temp_dir"
