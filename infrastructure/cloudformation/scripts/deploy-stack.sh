@@ -4,8 +4,14 @@
 # CloudFormation Stack Deployment Script
 #
 # This script deploys the parent CloudFormation template with all nested child
-# stacks. It handles template validation, S3 uploads, Lambda packaging, and
-# stack deployment with proper error handling.
+# stacks. It handles template validation, S3 uploads, Lambda packaging, stack
+# deployment, and the following post-deployment steps:
+#   - Updates the OpenAPI schema in S3 with the deployed API Gateway ID
+#   - Refreshes the AgentCore Gateway Target to pick up the updated schema
+#   - Creates the gateway secret in Secrets Manager (if it doesn't exist)
+#   - Warms up the AgentCore Runtime with an initial invocation
+#   - Builds and uploads the frontend to S3
+#   - Invalidates the CloudFront cache
 #
 # Usage:
 #   ./deploy-stack.sh <stack-name> <templates-bucket> <lambda-bucket> [options]
@@ -16,12 +22,20 @@
 #   lambda-bucket      S3 bucket name for storing Lambda deployment packages
 #
 # Options:
-#   --dry-run         Create changeset without executing (for review)
+#   --dry-run         Create changeset without executing (for review).
+#                     Post-deployment steps are skipped in dry-run mode.
+#   --no-rollback     Disable automatic rollback on failure — stack is left in
+#                     its failed state so you can inspect events and resources
+#                     before deleting manually. Useful for debugging new deployments.
+#                     WARNING: You must delete the failed stack manually before
+#                     redeploying. Do not use in production.
 #   --environment     Environment name (dev|staging|prod, default: dev)
 #   --profile         AWS CLI profile to use (default: uses AWS_PROFILE env var or "default")
 #   --region          AWS region to deploy into (e.g. us-west-2, default: profile/env default)
+#   --suffix          Deployment suffix in yyyymmddHHMM format appended to all named
+#                     resources for uniqueness. Auto-generated from current UTC time
+#                     if not provided.
 #   --help            Display this help message
-#   --suffix          Timestamp in yyyymmddHHMM format to maintain uniqueness
 #
 # Examples:
 #   # Deploy to dev environment using default profile
@@ -34,10 +48,29 @@
 #   ./deploy-stack.sh my-app-stack cfn-templates-prod lambda-code-prod \
 #     --dry-run --environment prod --profile prod-profile --region us-west-2
 #
+#   # Debug a failed deployment — keep stack in place for inspection
+#   ./deploy-stack.sh my-app-stack cfn-templates-dev lambda-code-dev \
+#     --no-rollback --environment dev --profile dev-profile
+#
 # Required IAM Permissions:
-#   - cloudformation:CreateStack, UpdateStack, DescribeStacks
-#   - s3:PutObject, s3:GetObject (on template and Lambda buckets)
-#   - iam:CreateRole, PassRole (for stack resources)
+#   CloudFormation:
+#     - cloudformation:CreateStack, UpdateStack, DeleteStack, DescribeStacks
+#     - cloudformation:CreateChangeSet, DescribeChangeSet, ExecuteChangeSet
+#     - cloudformation:ValidateTemplate
+#   S3:
+#     - s3:PutObject, s3:GetObject, s3:ListBucket (on templates and Lambda buckets)
+#     - s3:DeleteObject (on frontend bucket, for CloudFront invalidation cleanup)
+#   IAM:
+#     - iam:CreateRole, iam:AttachRolePolicy, iam:PassRole, iam:PutRolePolicy
+#   AgentCore:
+#     - bedrock-agentcore-control:ListGatewayTargets, UpdateGatewayTarget
+#     - bedrock-agentcore:InvokeAgentRuntime
+#   Secrets Manager:
+#     - secretsmanager:DescribeSecret, CreateSecret
+#   CloudFront:
+#     - cloudfront:CreateInvalidation
+#   STS:
+#     - sts:GetCallerIdentity
 #
 # Exit Codes:
 #   0 - Success
@@ -100,12 +133,20 @@ Arguments:
   lambda-bucket      S3 bucket name for storing Lambda deployment packages
 
 Options:
-  --dry-run         Create changeset without executing (for review)
+  --dry-run         Create changeset without executing (for review).
+                    Post-deployment steps are skipped in dry-run mode.
+  --no-rollback     Disable automatic rollback on failure — stack is left in
+                    its failed state so you can inspect events and resources
+                    before deleting manually. Useful for debugging new deployments.
+                    WARNING: You must delete the failed stack manually before
+                    redeploying. Do not use in production.
   --environment     Environment name (dev|staging|prod, default: dev)
   --profile         AWS CLI profile to use (default: AWS_PROFILE env var or "default")
   --region          AWS region to deploy into (e.g. us-west-2, default: profile/env default)
+  --suffix          Deployment suffix in yyyymmddHHMM format appended to all named
+                    resources for uniqueness. Auto-generated from current UTC time
+                    if not provided.
   --help            Display this help message
-  --suffix          Timestamp in yyyymmddHHMM format to maintain uniqueness
 
 Examples:
   # Deploy to dev environment using default profile
@@ -116,6 +157,9 @@ Examples:
 
   # Deploy to production with dry-run
   $0 my-app-stack cfn-templates-prod lambda-code-prod --dry-run --environment prod --profile prod-profile --region us-west-2
+
+  # Debug a failed deployment — keep stack in place for inspection
+  $0 my-app-stack cfn-templates-dev lambda-code-dev --no-rollback --environment dev --profile dev-profile
 
 EOF
     exit 1

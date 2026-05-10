@@ -12,10 +12,11 @@ An end-to-end reference implementation of a secure, agentic application built on
 4. [Project Structure](#project-structure)
 5. [Prerequisites](#prerequisites)
 6. [Infrastructure Code](#infrastructure-code)
-7. [Deploy the Stack](#deploy-the-stack)
-8. [Clean Up the Stack](#clean-up-the-stack)
-9. [Azure Entra ID Configuration](#azure-entra-id-configuration)
-10. [Test Scripts](#test-scripts)
+7. [AgentCore Policy Engine](#agentcore-policy-engine)
+8. [Deploy the Stack](#deploy-the-stack)
+9. [Clean Up the Stack](#clean-up-the-stack)
+10. [Azure Entra ID Configuration](#azure-entra-id-configuration)
+11. [Test Scripts](#test-scripts)
 
 ---
 
@@ -25,6 +26,7 @@ This project demonstrates a production-grade pattern for building secure agentic
 
 **Key capabilities demonstrated:**
 - Secure agent-to-API communication via AgentCore Gateway with MCP protocol
+- Cedar-based policy engine enforcing fine-grained access control on every gateway request
 - 3-legged OAuth2 authorization code flow for user-delegated API access
 - JWT-based API Gateway authorization using Azure Entra ID tokens
 - CloudFormation-based infrastructure with timestamped deployments for isolation
@@ -69,6 +71,7 @@ This project demonstrates a production-grade pattern for building secure agentic
 │                  Custom JWT authorizer (Azure Entra ID)                     │
 │                  OAuth2 credential provider (Microsoft)                     │
 │               Gateway Target → Orders API (OpenAPI schema)                  │
+│            Cedar Policy Engine (PermitPolicy + ForbidPolicy)                │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │ HTTPS (OAuth2 delegated token)
                                    ▼
@@ -102,7 +105,7 @@ OAuth2 Callback Flow (3-legged):
    - After consent, Azure redirects to the OAuth Callback Lambda
    - The callback retrieves the stored user token and calls `CompleteResourceTokenAuth`
 
-5. **AgentCore Gateway** validates the agent's JWT, then calls the Orders API using the delegated OAuth2 token on behalf of the user.
+5. **AgentCore Gateway** validates the agent's JWT, evaluates the Cedar policy engine (permit/forbid rules), then calls the Orders API using the delegated OAuth2 token on behalf of the user.
 
 6. **Orders API** validates the delegated token via a custom Lambda authorizer, then reads/writes to DynamoDB.
 
@@ -116,7 +119,7 @@ OAuth2 Callback Flow (3-legged):
 | **Agent Proxy Lambda** | Python 3.12 | HTTP gateway to AgentCore Runtime |
 | **OAuth Callback Lambda** | Python 3.12 | Handles 3-legged OAuth2 callback flow |
 | **AgentCore Runtime** | Python 3.12 + Strands | AI agent with MCP tool integration |
-| **AgentCore Gateway** | AWS Bedrock AgentCore | MCP gateway with JWT auth + OAuth2 |
+| **AgentCore Gateway** | AWS Bedrock AgentCore | MCP gateway with JWT auth + OAuth2 + Cedar policy engine |
 | **Orders API** | Python 3.12 + API Gateway | REST API for order management |
 | **DynamoDB (orders)** | AWS DynamoDB | Order data storage |
 | **DynamoDB (oauth-cb)** | AWS DynamoDB | Temporary OAuth token storage |
@@ -162,6 +165,9 @@ OAuth2 Callback Flow (3-legged):
 │       │   ├── agentcore-app-stack.yaml # AgentCore + Agent App infrastructure
 │       │   ├── frontend-stack.yaml     # S3 + CloudFront
 │       │   └── monitoring-stack.yaml   # CloudWatch dashboards + alarms
+│       ├── agentcore-policy-templates/
+│       │   ├── permit-actions.txt      # Reference: Cedar permit policy (allow all gateway calls)
+│       │   └── forbid-actions.txt      # Reference: Cedar forbid policy (block qty >= 100)
 │       ├── parameters/
 │       │   ├── dev-parameters.json     # Dev environment parameters (gitignored)
 │       │   ├── staging-parameters.json # Staging parameters (gitignored)
@@ -176,7 +182,10 @@ OAuth2 Callback Flow (3-legged):
 │   ├── API_DOCUMENTATION.md
 │   ├── AUTHENTICATION_SETUP.md
 │   └── MONITORING_AND_ALERTING.md
+├── validate_cfn.py                     # Quick CloudFormation template structure validator
 └── tests/
+    ├── unit/
+    │   └── test_agentcore_policy_engine_properties.py  # Property-based tests for Cedar policies
     ├── utils/
     │   ├── test_api_live.sh            # Live API test script
     │   ├── generate_azure_token.sh     # Azure token generation helper
@@ -258,7 +267,7 @@ The infrastructure is organized as a **parent CloudFormation stack** with 4 nest
 | Stack | Template | Resources |
 |---|---|---|
 | **BackendAPIStack** | `backend-api-stack.yaml` | DynamoDB, 4 Lambda functions, API Gateway, JWT authorizer |
-| **AgentCoreAppStack** | `agentcore-app-stack.yaml` | AgentCore Gateway, Runtime, OAuth2 provider, Agent Proxy Lambda, OAuth Callback Lambda, HTTP API Gateway, DynamoDB (oauth tokens) |
+| **AgentCoreAppStack** | `agentcore-app-stack.yaml` | AgentCore Gateway, Runtime, OAuth2 provider, Cedar PolicyEngine, PermitPolicy, ForbidPolicy, Agent Proxy Lambda, OAuth Callback Lambda, HTTP API Gateway, DynamoDB (oauth tokens) |
 | **FrontendStack** | `frontend-stack.yaml` | S3 bucket, CloudFront distribution, OAC |
 | **MonitoringStack** | `monitoring-stack.yaml` | CloudWatch dashboard, 5 alarms, 3 log metric filters |
 
@@ -273,6 +282,94 @@ cp infrastructure/cloudformation/parameters/dev-parameters.json.template \
 ```
 
 Edit `dev-parameters.json` and replace all `REPLACE_WITH_*` placeholders with your actual values. **This file is gitignored** — never commit it.
+
+---
+
+## AgentCore Policy Engine
+
+The AgentCore Gateway is backed by a **Cedar policy engine** that evaluates every tool call before it reaches the Orders API. Three CloudFormation resources are provisioned in `agentcore-app-stack.yaml`:
+
+| Resource | Type | Purpose |
+|---|---|---|
+| `PolicyEngine` | `AWS::BedrockAgentCore::PolicyEngine` | Cedar policy engine attached to the gateway in `ENFORCE` mode |
+| `PermitPolicy` | `AWS::BedrockAgentCore::Policy` | Allows all principals to call any action on the gateway |
+| `ForbidPolicy` | `AWS::BedrockAgentCore::Policy` | Blocks `createOrder` and `updateOrder` requests where `qty >= 100` |
+
+### Policy logic
+
+**PermitPolicy** — broad allow rule:
+```cedar
+permit (
+    principal,
+    action,
+    resource is AgentCore::Gateway
+);
+```
+
+**ForbidPolicy** — quantity guard (Cedar `forbid` takes precedence over `permit`):
+```cedar
+forbid (
+    principal,
+    action in [
+        AgentCore::Action::"<target>___createOrder",
+        AgentCore::Action::"<target>___updateOrder"
+    ],
+    resource == AgentCore::Gateway::"<gateway-arn>"
+)
+when {
+    ((context has input) && ((context.input) has qty)) &&
+    (!(((context.input).qty) < 100))
+};
+```
+
+The `when` clause uses Cedar's safe-navigation semantics — requests without a `qty` field are not affected by the forbid rule.
+
+### Resource naming
+
+Policy resource names follow the pattern `{environment}_{type}_{suffix}` (underscores, no hyphens) to satisfy the AWS name regex `^[A-Za-z][A-Za-z0-9_]*$` and stay within the 48-character limit:
+
+| Resource | Example name |
+|---|---|
+| PolicyEngine | `dev_orders_gateway_policy_202605100354` |
+| PermitPolicy | `dev_permit_orders_policy_202605100354` |
+| ForbidPolicy | `dev_forbid_orders_policy_202605100354` |
+
+### Creation order
+
+The policy resources have strict dependency ordering to ensure the Cedar schema is populated before policies are validated:
+
+```
+PolicyEngine → AgentCoreGateway → GatewayTarget → PermitPolicy
+                                                 → ForbidPolicy
+```
+
+### Policy reference files
+
+The Cedar policy statements are embedded directly in the CloudFormation template. The files in `infrastructure/cloudformation/agentcore-policy-templates/` are **reference copies only** — changes there have no effect unless the template is also updated.
+
+### Testing policies
+
+Property-based tests in `tests/unit/test_agentcore_policy_engine_properties.py` validate the Cedar `when` clause logic using the [Hypothesis](https://hypothesis.readthedocs.io/) framework:
+
+```bash
+pip install hypothesis
+python -m pytest tests/unit/test_agentcore_policy_engine_properties.py -v
+```
+
+Five properties are verified across hundreds of generated inputs:
+1. ForbidPolicy **blocks** `qty >= 100`
+2. ForbidPolicy **permits** `qty < 100`
+3. ForbidPolicy **permits** requests with no `qty` field (safe navigation)
+4. All resource names fit within the **48-character** AWS limit
+5. All resource names match the **AWS name pattern** `^[A-Za-z][A-Za-z0-9_]*$`
+
+### Validating the template structure
+
+`validate_cfn.py` is a quick sanity-check script that parses the CloudFormation template and confirms the `PolicyEngine` resource exists and appears before `AgentCoreGateway` in the resource map:
+
+```bash
+python validate_cfn.py
+```
 
 ---
 
@@ -439,7 +536,7 @@ bash infrastructure/cloudformation/scripts/validate-templates.sh
 
 - **Parameter files are gitignored** — never commit `dev-parameters.json`, `staging-parameters.json`, or `prod-parameters.json` as they contain secrets.
 - **Each deployment gets a unique suffix** — use the same suffix for cleanup as was used for deployment.
-- **The `ai-agent/src/lib/` directory** contains pre-compiled `aarch64` Python 3.12 binaries for the AgentCore Runtime. The deploy script rebuilds it automatically if missing. Only rebuild manually when upgrading dependency versions:
+- **The `ai-agent/src/lib/` directory** contains pre-compiled `aarch64` Python 3.12 binaries for the AgentCore Runtime. The deploy script always runs `uv pip install -r requirements.txt` on top of `lib/` at package time, so newly added dependencies (like `strands-agents-tools`) are automatically included without needing to rebuild `lib/` from scratch. Only rebuild `lib/` manually when upgrading the pinned versions of heavy packages:
   ```bash
   rm -rf ai-agent/src/lib && mkdir -p ai-agent/src/lib
   uv pip install \
@@ -447,9 +544,7 @@ bash infrastructure/cloudformation/scripts/validate-templates.sh
     --python-version 3.12 \
     --target=ai-agent/src/lib \
     --only-binary=:all: \
-    "bedrock-agentcore==1.7.0" \
-    "strands-agents==1.37.0" \
-    "aws-opentelemetry-distro==0.17.0"
+    -r ai-agent/src/requirements.txt
   ```
 - **The OpenAPI schema** (`docs/orders-api-openapi-3.0.yaml`) contains a placeholder API Gateway ID that is automatically replaced during deployment.
 - **Gateway secret** (`${environment}-gateway-secret-${suffix}`) is created automatically by the deploy script and contains the Azure credentials needed by the agent for client-credentials OAuth flow fallback.

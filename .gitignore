@@ -102,3 +102,4 @@ infrastructure/cloudformation/agentcore-gateway-parameters.json
 .kiro/specs/*/tasks.md
 .kiro/specs/*/.config.kiro
 .kiro/specs/*/bugfix.md
+infrastructure/scripts/quick-command-reference.txt
