@@ -10,20 +10,23 @@
     <main class="app">
       <header class="header">
         <div>
-          <h1>Order Management Agent</h1>
-          <p>AgentCore Security and Observability Demo</p>
+          <h1>Order Management Agent <span class="version-badge">v1.2.0</span></h1>
         </div>
-        <div class="auth-section">
-          <div id="user-info" style="display: none; margin-right: 10px;"></div>
-          <button id="signin" onclick="signIn()" style="display: none;">
-            Sign in
-          </button>
-          <button id="signout" onclick="signOut()" style="display: none;">
-            Sign out
-          </button>
+        <div class="header-right">
+          <button class="reset-session-btn" id="force-reauth" onclick="forceReauth()" title="Force re-authorization for Gateway 3LO">🔐 Force Reauth</button>
+          <button class="reset-session-btn" id="reset-session" onclick="resetSession()" title="Reset runtime session">⟳ New Session</button>
+          <span class="status" id="status">Disconnected</span>
+          <div class="auth-section">
+            <span id="user-info" style="display: none;"></span>
+            <button id="signin" onclick="signIn()" style="display: none;">
+              Sign in
+            </button>
+            <button id="signout" onclick="signOut()" style="display: none;">
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
-      <div class="status" id="status">Disconnected</div>
       
       <!-- Login prompt message (shown when not logged in) -->
       <div class="login-prompt" id="login-prompt" style="display: none;">

@@ -151,6 +151,34 @@ Parameters:
     Default: ''
     Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
 
+  CreateDDBTable:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Whether to create DDB table (false for DR region — uses Global Table replica)
+
+  DRRegion:
+    Type: String
+    Default: ''
+    Description: DR region for DDB Global Table replica (leave empty to skip replica)
+
+  LambdaEdgeArn:
+    Type: String
+    Default: ''
+    Description: Lambda@Edge ARN for /api/* routing (leave empty to skip)
+
+  DeployFrontend:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Whether to deploy the Frontend stack (false for DR region)
+
+# ============================================================================
+# CONDITIONS
+# ============================================================================
+Conditions:
+  ShouldDeployFrontend: !Equals [!Ref DeployFrontend, 'true']
+
 # ============================================================================
 # RESOURCES - NESTED STACKS
 # ============================================================================
@@ -177,6 +205,8 @@ Resources:
         TokenAudience: !Ref TokenAudience
         AuthorizedUsers: !Ref AuthorizedUsers
         DeploymentSuffix: !Ref DeploymentSuffix
+        CreateDDBTable: !Ref CreateDDBTable
+        DRRegion: !Ref DRRegion
       
       # Tags for cost allocation and resource management
       Tags:
@@ -236,6 +266,7 @@ Resources:
   # Dependencies: None (can deploy in parallel with other stacks)
   FrontendStack:
     Type: AWS::CloudFormation::Stack
+    Condition: ShouldDeployFrontend
     Properties:
       # Template URL must be accessible via HTTPS from S3
       TemplateURL: !Sub 'https://${TemplatesBucket}.s3.${AWS::Region}.amazonaws.com/templates/frontend-stack.yaml'
@@ -247,6 +278,7 @@ Resources:
         CloudFrontPriceClass: !Ref CloudFrontPriceClass
         SslCertificateArn: !Ref SslCertificateArn
         DeploymentSuffix: !Ref DeploymentSuffix
+        LambdaEdgeArn: !Ref LambdaEdgeArn
       
       # Tags for cost allocation and resource management
       Tags:
@@ -266,6 +298,7 @@ Resources:
   # Dependencies: BackendAPIStack (requires API Gateway ID and authorizer function name)
   MonitoringStack:
     Type: AWS::CloudFormation::Stack
+    Condition: ShouldDeployFrontend
     DependsOn: BackendAPIStack
     Properties:
       # Template URL must be accessible via HTTPS from S3
@@ -400,21 +433,24 @@ Outputs:
   # ============================================================================
   # FRONTEND STACK OUTPUTS
   # ============================================================================
-  # Outputs from the static website hosting infrastructure
+  # Outputs from the static website hosting infrastructure (conditional — not in DR)
   
   CloudFrontDomainName:
+    Condition: ShouldDeployFrontend
     Description: CloudFront Distribution Domain Name (use this URL to access the frontend)
     Value: !GetAtt FrontendStack.Outputs.CloudFrontDomainName
     Export:
       Name: !Sub '${AWS::StackName}-CloudFrontDomainName'
   
   CloudFrontDistributionId:
+    Condition: ShouldDeployFrontend
     Description: CloudFront Distribution ID (for cache invalidation)
     Value: !GetAtt FrontendStack.Outputs.CloudFrontDistributionId
     Export:
       Name: !Sub '${AWS::StackName}-CloudFrontDistributionId'
   
   S3BucketName:
+    Condition: ShouldDeployFrontend
     Description: Frontend S3 Bucket Name (upload static files here)
     Value: !GetAtt FrontendStack.Outputs.S3BucketName
     Export:
@@ -423,14 +459,16 @@ Outputs:
   # ============================================================================
   # MONITORING STACK OUTPUTS
   # ============================================================================
-  # Outputs from the observability infrastructure
+  # Outputs from the observability infrastructure (conditional — not in DR)
   
   DashboardName:
+    Condition: ShouldDeployFrontend
     Description: CloudWatch Dashboard Name (view in CloudWatch console)
     Value: !GetAtt MonitoringStack.Outputs.DashboardName
     Export:
       Name: !Sub '${AWS::StackName}-DashboardName'
   
   DashboardUrl:
+    Condition: ShouldDeployFrontend
     Description: CloudWatch Dashboard URL
     Value: !Sub 'https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${MonitoringStack.Outputs.DashboardName}'

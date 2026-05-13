@@ -17,10 +17,10 @@ servers:
     description: AWS API Gateway endpoint
     variables:
       apiId:
-        default: 2u8i08vno4
+        default: 0jyiglcub9
         description: API Gateway REST API ID
       region:
-        default: us-west-2
+        default: us-east-1
         description: AWS Region
         enum:
           - us-east-1

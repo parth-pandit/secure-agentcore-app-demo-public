@@ -19,6 +19,61 @@ const endpoint = window.AGENTCORE_ENDPOINT || "";
 const wsSignEndpoint = window.WS_SIGN_ENDPOINT || "";
 const maxAuthRetries = runtimeConfig.maxAuthRetries;
 
+// Prompt history (arrow up/down to recall)
+const promptHistory = [];
+let historyIndex = -1;
+
+promptInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (promptHistory.length === 0) return;
+    if (historyIndex < promptHistory.length - 1) {
+      historyIndex++;
+    }
+    promptInput.value = promptHistory[promptHistory.length - 1 - historyIndex];
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    if (historyIndex > 0) {
+      historyIndex--;
+      promptInput.value = promptHistory[promptHistory.length - 1 - historyIndex];
+    } else {
+      historyIndex = -1;
+      promptInput.value = "";
+    }
+  }
+});
+
+// Force re-authorization — sends force_reauth prompt to invalidate Gateway token vault
+function forceReauth() {
+  addMessage("force_reauth", "user");
+  setStatus("Forcing re-auth...", true);
+  const pending = addMessage("Forcing re-authorization...", "agent pending");
+  
+  sendViaHttp("force_reauth", pending, 0).then(() => {
+    pending.classList.remove("pending");
+    setStatus("Re-auth triggered", true);
+  }).catch(() => {
+    pending.innerHTML = renderMarkdown("Re-auth request sent. Next tool call will prompt for authorization.");
+    pending.classList.remove("pending");
+    setStatus("Connected", true);
+  });
+}
+
+// Reset runtime session — clears session cookie and chat, forces new runtime session
+function resetSession() {
+  // Clear the session cookie
+  document.cookie = "runtime_session_id=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+  // Clear chat messages
+  chat.innerHTML = "";
+  // Reset prompt history
+  promptHistory.length = 0;
+  historyIndex = -1;
+  // Add system message
+  addMessage("Session reset. Next message will start a new runtime session.", "agent");
+  setStatus("New Session", true);
+  console.log("Runtime session reset — next invocation will get a new session ID");
+}
+
 // Cookie utility functions
 function setCookie(name, value, minutes) {
   const expirationMinutes = minutes || runtimeConfig.cookieExpirationMinutes;
@@ -102,6 +157,8 @@ form.addEventListener("submit", async (event) => {
 
   addMessage(prompt, "user");
   promptInput.value = "";
+  promptHistory.push(prompt);
+  historyIndex = -1;
   setStatus("Sending...", true);
   const pending = addMessage("Thinking...", "agent pending");
 
@@ -212,7 +269,25 @@ async function sendViaHttp(prompt, element, attempt) {
     }
 
     if (data.result) {
-      await streamText(element, data.result);
+      // Show memory loaded indicator if this is a new microVM
+      if (data.memory_loaded === true) {
+        const memBadge = document.createElement("div");
+        memBadge.className = "meta-info-box";
+        memBadge.innerHTML = "📝 Previous memory context loaded";
+        element.insertAdjacentElement('beforebegin', memBadge);
+      } else if (data.memory_loaded === false) {
+        const memBadge = document.createElement("div");
+        memBadge.className = "meta-info-box";
+        memBadge.innerHTML = "🆕 New session — no previous memory";
+        element.insertAdjacentElement('beforebegin', memBadge);
+      }
+      
+      // Parse metadata from response text (agent prepends it)
+      const { metaHtml, body } = parseResponseMeta(data.result, data);
+      if (metaHtml) {
+        element.insertAdjacentHTML('beforebegin', metaHtml);
+      }
+      await streamText(element, body);
     } else if (data.error) {
       element.innerHTML = renderMarkdown(`Error: ${data.error}`);
     } else {
@@ -416,3 +491,47 @@ function renderMarkdown(input) {
   }
 }
 
+
+
+// Parse metadata line from agent response (prepended by agent)
+// Format: "🔧 Tools Used: tool1 | tool2 | Region: us-east-1\n\n<actual response>"
+// Falls back to JSON fields if the text prefix isn't present.
+function parseResponseMeta(text, data) {
+  if (!text) return { metaHtml: null, body: text };
+  
+  const match = text.match(/^(🔧 Tools Used:.+)\n\n([\s\S]*)$/);
+  if (match) {
+    let metaLine = match[1];
+    // Append session ID from JSON response
+    if (data && data.runtime_session_id) {
+      metaLine += ` | Session: ${data.runtime_session_id}`;
+    }
+    return {
+      metaHtml: `<div class="meta-info-box">${metaLine}</div>`,
+      body: match[2]
+    };
+  }
+  
+  // Fallback: build info box from JSON fields if agent didn't prepend metadata
+  const parts = [];
+  if (data && data.tools_used && data.tools_used.length > 0) {
+    parts.push(`🔧 Tools Used: ${data.tools_used.join(' | ')}`);
+  } else {
+    parts.push(`🔧 Tools Used: none`);
+  }
+  if (data && data.runtime_session_id) {
+    parts.push(`Session: ${data.runtime_session_id}`);
+  }
+  if (data && data.region) {
+    parts.push(`Region: ${data.region}`);
+  }
+  
+  if (parts.length > 0) {
+    return {
+      metaHtml: `<div class="meta-info-box">${parts.join(' &nbsp;|&nbsp; ')}</div>`,
+      body: text
+    };
+  }
+  
+  return { metaHtml: null, body: text };
+}

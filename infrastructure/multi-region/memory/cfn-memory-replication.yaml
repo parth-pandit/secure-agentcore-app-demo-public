@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Memory replication pipeline (primary region only).
+  S3 bucket + SNS topic + SQS queue + Lambda replicator.
+  Replays short-term memory events from primary to DR region.
+
+Parameters:
+  StackPrefix:
+    Type: String
+    Default: acore-redwood
+
+  DrRegion:
+    Type: String
+    Default: us-east-2
+    Description: DR region where events are replicated to
+
+  DrMemoryId:
+    Type: String
+    Description: Memory ID in the DR region (deploy DR memory first)
+
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing the replicator Lambda code
+
+  LambdaCodeKey:
+    Type: String
+    Default: memory-replicator/lambda.zip
+    Description: S3 key for the replicator Lambda zip
+
+Resources:
+
+  # ============================================================
+  # S3 Bucket for payload delivery
+  # ============================================================
+  PayloadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${StackPrefix}-memory-payloads-${AWS::AccountId}"
+      LifecycleConfiguration:
+        Rules:
+          - Id: auto-delete-payloads
+            Status: Enabled
+            ExpirationInDays: 7
+
+  # ============================================================
+  # SNS Topic for job notifications
+  # ============================================================
+  ReplicationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${StackPrefix}-memory-replication-jobs"
+
+  # ============================================================
+  # SQS DLQ
+  # ============================================================
+  ReplicationDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${StackPrefix}-memory-replication-dlq"
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  # ============================================================
+  # SQS Queue (subscribed to SNS)
+  # ============================================================
+  ReplicationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${StackPrefix}-memory-replicator-queue"
+      VisibilityTimeout: 180  # must be >= Lambda timeout
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ReplicationDLQ.Arn
+        maxReceiveCount: 3
+
+  # SQS policy to allow SNS to send messages
+  QueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ReplicationQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ReplicationQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref ReplicationTopic
+
+  # SNS → SQS subscription
+  SnsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref ReplicationTopic
+      Protocol: sqs
+      Endpoint: !GetAtt ReplicationQueue.Arn
+      RawMessageDelivery: true
+
+  # ============================================================
+  # IAM Role for Replicator Lambda
+  # ============================================================
+  ReplicatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${StackPrefix}-memory-replicator-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ReplicatorPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: SQSConsume
+                Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource:
+                  - !GetAtt ReplicationQueue.Arn
+              - Sid: SQSSendDLQ
+                Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource:
+                  - !GetAtt ReplicationDLQ.Arn
+              - Sid: S3Read
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub "arn:aws:s3:::${StackPrefix}-memory-payloads-${AWS::AccountId}/*"
+              - Sid: DRMemoryWrite
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateEvent
+                Resource:
+                  - !Sub "arn:aws:bedrock-agentcore:${DrRegion}:${AWS::AccountId}:memory/*"
+
+  # ============================================================
+  # Replicator Lambda
+  # ============================================================
+  ReplicatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${StackPrefix}-memory-replicator"
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt ReplicatorRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          DR_REGION: !Ref DrRegion
+          DR_MEMORY_ID: !Ref DrMemoryId
+          S3_BUCKET: !Sub "${StackPrefix}-memory-payloads-${AWS::AccountId}"
+          DLQ_URL: !Ref ReplicationDLQ
+
+  # SQS → Lambda event source mapping
+  EventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt ReplicationQueue.Arn
+      FunctionName: !Ref ReplicatorFunction
+      BatchSize: 5
+      MaximumBatchingWindowInSeconds: 10
+
+Outputs:
+  PayloadBucketName:
+    Description: S3 bucket for memory payload delivery
+    Value: !Ref PayloadBucket
+    Export:
+      Name: !Sub "${StackPrefix}-memory-payload-bucket"
+
+  ReplicationTopicArn:
+    Description: SNS topic ARN for memory replication
+    Value: !Ref ReplicationTopic
+    Export:
+      Name: !Sub "${StackPrefix}-memory-replication-topic-arn"
+
+  ReplicatorFunctionArn:
+    Description: Replicator Lambda ARN
+    Value: !GetAtt ReplicatorFunction.Arn
+
+  DLQUrl:
+    Description: DLQ URL for failed replication
+    Value: !Ref ReplicationDLQ

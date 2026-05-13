@@ -49,13 +49,17 @@ GATEWAY_TOOLS_ENABLED = os.getenv("GATEWAY_TOOLS_ENABLED", "true").lower() in {"
 GATEWAY_PROTOCOL_VERSION = os.getenv("GATEWAY_PROTOCOL_VERSION", "2025-11-25")
 
 # OAuth configuration
-# OAUTH_FORCE_AUTH = os.getenv("OAUTH_FORCE_AUTH", "false").lower() in {"1", "true", "yes"}
-OAUTH_FORCE_AUTH = False
+OAUTH_FORCE_AUTH = os.getenv("OAUTH_FORCE_AUTH", "false").lower() in {"1", "true", "yes"}
 
 OAUTH_CALLBACK_SERVER_URL = os.getenv("OAUTH_CALLBACK_SERVER_URL")  # OAuth callback server endpoint
 
 # Logging configuration
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()  # DEBUG, INFO, WARNING, ERROR
+
+# Memory configuration
+MEMORY_ID = os.getenv("MEMORY_ID", "")  # AgentCore Memory ID (just the ID, not full ARN)
+MEMORY_REGION = os.getenv("MEMORY_REGION", os.getenv("AWS_REGION", "us-east-1"))
+MEMORY_RECALL_MAX_EVENTS = int(os.getenv("MEMORY_RECALL_MAX_EVENTS", "10"))
 
 # ============================================================================
 # Application Initialization
@@ -77,6 +81,8 @@ logger.info("  Gateway Tools Enabled: %s", GATEWAY_TOOLS_ENABLED)
 logger.info("  OAuth Force Auth: %s", OAUTH_FORCE_AUTH)
 logger.info("  OAuth Callback Server URL: %s", OAUTH_CALLBACK_SERVER_URL or "(not configured)")
 logger.info("  Log Level: %s", LOG_LEVEL)
+logger.info("  Memory ID: %s", MEMORY_ID or "(not configured)")
+logger.info("  Memory Region: %s", MEMORY_REGION)
 
 # ============================================================================
 # Global State Management
@@ -107,6 +113,174 @@ _user_email_cache = threading.local()  # Stores user email per request
 # Global user email cache (for cross-thread access within a request)
 _current_user_email = None  # Current user email for the active request
 _user_email_lock = threading.Lock()  # Thread-safe access to email
+
+# Tools used tracking (global, reset per request)
+_current_tools_used = []  # List of tool names invoked in current request
+
+# Memory state
+_memory_client = None  # Lazy-initialized boto3 client for memory
+_memory_recalled = False  # Whether memory has been recalled for this microVM lifecycle
+
+# Conversation history — persists within the microVM session
+# Seeded from memory on first invocation, appended after each turn
+_conversation_history = []
+
+# Patterns to skip saving to memory (auth/admin turns)
+_SKIP_RESPONSE_PATTERNS = ["oauth2/authorize", "one-time authorization", "Authorize Access"]
+_SKIP_PROMPT_PATTERNS = ["force_reauth", "recall_memory", "test memory"]
+
+
+# ============================================================================
+# Memory Integration
+# ============================================================================
+
+
+def _get_memory_client():
+    """Get or create the boto3 bedrock-agentcore client for memory operations."""
+    global _memory_client
+    if _memory_client is None and MEMORY_ID:
+        _memory_client = boto3.client("bedrock-agentcore", region_name=MEMORY_REGION)
+    return _memory_client
+
+
+def _seed_history_from_recall(recall_text: str):
+    """Parse recalled memory text and seed conversation history for context continuity."""
+    global _conversation_history
+    if not recall_text or _conversation_history:
+        return  # Don't re-seed if we already have history
+
+    lines = recall_text.split("\n")
+    for line in lines:
+        line = line.strip()
+        # User messages: "**🗣️ some text**"
+        if "🗣️" in line:
+            text = line.replace("**", "").replace("🗣️", "").strip()
+            if text:
+                _conversation_history.append({"role": "user", "content": [{"text": text}]})
+        # Assistant messages: "💬 some text"
+        elif "💬" in line:
+            text = line.replace("💬", "").strip()
+            if text:
+                _conversation_history.append({"role": "assistant", "content": [{"text": text}]})
+
+    if _conversation_history:
+        logger.info("Seeded %d messages from memory recall", len(_conversation_history))
+
+
+def memory_save_turn(actor_id: str, session_id: str, user_text: str, assistant_text: str):
+    """Save a conversation turn (user + assistant) to AgentCore Memory."""
+    client = _get_memory_client()
+    if not client or not MEMORY_ID:
+        return
+
+    # Skip auth-related and admin turns
+    if any(p in assistant_text for p in _SKIP_RESPONSE_PATTERNS):
+        return
+    if any(p in user_text.lower() for p in _SKIP_PROMPT_PATTERNS):
+        return
+
+    # Sanitize actor_id for memory API (only allows [a-zA-Z0-9-_/])
+    import re
+    safe_actor = re.sub(r'[^a-zA-Z0-9\-_/]', '-', actor_id)
+
+    try:
+        from datetime import datetime, timezone
+        client.create_event(
+            memoryId=MEMORY_ID,
+            actorId=safe_actor,
+            sessionId=session_id,
+            eventTimestamp=datetime.now(timezone.utc),
+            payload=[
+                {"conversational": {"content": {"text": user_text}, "role": "USER"}},
+                {"conversational": {"content": {"text": assistant_text}, "role": "ASSISTANT"}},
+            ],
+        )
+        logger.info("Saved turn to memory: actor=%s, session=%s", safe_actor, session_id[:12])
+    except Exception as e:
+        logger.warning("Failed to save turn to memory: %s", e)
+
+
+def memory_recall(actor_id: str) -> str | None:
+    """Recall recent conversation history for an actor across all sessions.
+
+    Returns a formatted string of recent messages, or None if no history.
+    """
+    client = _get_memory_client()
+    if not client or not MEMORY_ID:
+        return None
+
+    # Sanitize actor_id for memory API
+    import re
+    safe_actor = re.sub(r'[^a-zA-Z0-9\-_/]', '-', actor_id)
+
+    try:
+        # List sessions for this actor
+        resp = client.list_sessions(memoryId=MEMORY_ID, actorId=safe_actor, maxResults=20)
+        sessions = resp.get("sessionSummaries", [])
+        if not sessions:
+            return None
+
+        # Sort oldest first
+        sessions.sort(key=lambda s: str(s.get("createdAt", "")))
+
+        # Collect interactions
+        all_interactions = []
+        for sess in sessions:
+            sid = sess.get("sessionId", "")
+            if not sid:
+                continue
+            try:
+                ev_resp = client.list_events(
+                    memoryId=MEMORY_ID, actorId=safe_actor, sessionId=sid,
+                    includePayloads=True, maxResults=20,
+                )
+                session_events = []
+                for ev in ev_resp.get("events", []):
+                    event_msgs = []
+                    for msg in ev.get("payload", []):
+                        conv = msg.get("conversational", {})
+                        role = conv.get("role", "")
+                        text = conv.get("content", {}).get("text", "")
+                        if text and role:
+                            event_msgs.append({"role": role, "text": text})
+                    if event_msgs:
+                        session_events.append(event_msgs)
+                # Reverse (newest-first → chronological)
+                session_events.reverse()
+                for event_msgs in session_events:
+                    all_interactions.extend(event_msgs)
+            except Exception:
+                pass
+
+        if not all_interactions:
+            return None
+
+        # Take last N turns
+        recent = all_interactions[-(MEMORY_RECALL_MAX_EVENTS * 2):]
+
+        num_turns = sum(1 for m in recent if m["role"] == "USER")
+        lines = [f"📝 **Recent conversation history** ({num_turns} turns):\n"]
+        i = 0
+        while i < len(recent):
+            msg = recent[i]
+            if msg["role"] == "USER":
+                lines.append(f"**🗣️ {msg['text'][:300]}**")
+                if i + 1 < len(recent) and recent[i + 1]["role"] == "ASSISTANT":
+                    lines.append(f"💬 {recent[i + 1]['text'][:500]}")
+                    i += 2
+                else:
+                    i += 1
+                lines.append("\n---\n")
+            else:
+                lines.append(f"💬 {msg['text'][:500]}")
+                lines.append("\n---\n")
+                i += 1
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.warning("Memory recall failed: %s", e)
+        return None
 
 
 # ============================================================================
@@ -691,12 +865,19 @@ def _register_gateway_tools(tools: list[dict]):
                     arguments = tool_use.get("input") or {}
                     tool_use_id = tool_use.get("toolUseId")
                 
+                # Global declarations (must be before any use of these variables)
+                global _current_tools_used
+                global OAUTH_FORCE_AUTH
+                
                 # Get user email for logging
                 user_email = _get_user_email() or "unknown-user"
                 
                 # Log tool invocation request
                 logger.info("%s requested to invoke %s tool.", user_email, tool_name)
                 logger.debug("Tool arguments: %s", arguments)
+                
+                # Track tools used in this request
+                _current_tools_used.append(tool_name)
                 
                 try:
                     # Build Gateway request
@@ -758,6 +939,14 @@ def _register_gateway_tools(tools: list[dict]):
 
                     result = _gateway_jsonrpc(method="tools/call", params=params)
                     logger.debug("Gateway JSON-RPC call completed for tool: %s", tool_name)
+                    logger.info("Tool call raw result keys: %s", list(result.keys()) if isinstance(result, dict) else type(result))
+                    if isinstance(result, dict) and "error" in result:
+                        logger.info("Tool call returned error: %s", json.dumps(result["error"])[:500])
+                    
+                    # Reset force auth after successful call
+                    if OAUTH_FORCE_AUTH:
+                        OAUTH_FORCE_AUTH = False
+                        logger.info("Force re-auth reset after tool call")
                     
                 except Exception as exc:
                     logger.error("Tool execution failed: %s, error=%s", tool_name, exc, exc_info=True)
@@ -794,29 +983,9 @@ def _register_gateway_tools(tools: list[dict]):
 
                 # Handle success responses (may contain OAuth URL)
                 payload = result.get("result") if isinstance(result, dict) else result
-                logger.debug("payload from result: %s", payload)
+                logger.info("Tool success payload (first 500 chars): %s", str(payload)[:500])
                 
-                # Check if payload contains authorization/permission errors
-                payload_str = str(payload).lower() if payload else ""
-                is_auth_error_in_payload = any(keyword in payload_str for keyword in 
-                                               ["permissions", "unauthorized", 
-                                               "forbidden", "denied", "not allowed",
-                                               "unable", "deny", "error", "preventing", 
-                                               "prevent"])
-                
-                if is_auth_error_in_payload:
-                    logger.warning("%s was blocked from invoking %s tool.", user_email, tool_name)
-                    auth_url = _extract_auth_url(payload)
-                    if auth_url:
-                        logger.info("OAuth authentication required for tool: %s, auth_url=%s", tool_name, auth_url)
-                        _set_request_auth_url(auth_url)
-                    return {
-                        "status": "error",
-                        "toolUseId": tool_use_id,
-                        "content": [{"text": json.dumps(payload)}],
-                    }
-                
-                # Log successful tool invocation (no error in result or payload)
+                # Log successful tool invocation
                 logger.info("%s successfully invoked %s tool.", user_email, tool_name)
                 
                 auth_url = _extract_auth_url(payload)
@@ -1022,6 +1191,16 @@ def invoke(payload, context):
     logger.info("HTTP invocation started")
     logger.info("=== DIAGNOSTIC LOGGING START ===")
     
+    # Reset per-request state
+    global _current_tools_used
+    _current_tools_used.clear()
+    _set_request_auth_url(None)
+
+    # Auto-recall memory on first invocation (new microVM)
+    global _memory_recalled
+    if not _memory_recalled and MEMORY_ID:
+        actor_email = None  # Will be set after token parsing below
+    
     try:
         # Reset request-scoped state
         _set_request_auth_url(None)
@@ -1085,6 +1264,28 @@ def invoke(payload, context):
         
         # Ensure MCP tools are loaded
         logger.info("DIAGNOSTIC: About to load MCP tools")
+
+        # Auto-recall memory on first invocation of this microVM
+        _memory_loaded_this_request = None  # Track if recall happened THIS invocation
+        if not _memory_recalled and MEMORY_ID:
+            actor_for_recall = _get_user_email() or "anonymous"
+            if actor_for_recall != "anonymous":
+                try:
+                    import re as _re
+                    safe_actor_recall = _re.sub(r'[^a-zA-Z0-9\-_/]', '-', actor_for_recall)
+                    recall_result = memory_recall(actor_for_recall)
+                    if recall_result:
+                        _seed_history_from_recall(recall_result)
+                        logger.info("Auto-recalled memory context for %s (%d messages seeded)",
+                                    safe_actor_recall, len(_conversation_history))
+                        _memory_loaded_this_request = True
+                    else:
+                        _memory_loaded_this_request = False
+                    _memory_recalled = True
+                except Exception as e:
+                    logger.warning("Auto-recall failed: %s", e)
+                    _memory_recalled = True
+                    _memory_loaded_this_request = False
         _ensure_gateway_tools_loaded()
         logger.info("DIAGNOSTIC: MCP tools loaded successfully")
         
@@ -1094,6 +1295,13 @@ def invoke(payload, context):
             logger.warning("HTTP invocation missing prompt")
             logger.info("=== DIAGNOSTIC LOGGING END (ERROR: missing prompt) ===")
             return {"error": "Missing 'prompt' in request body."}
+        
+        # Handle force_reauth — sets flag for next tool call to force re-authorization
+        global OAUTH_FORCE_AUTH
+        if prompt.lower() == "force_reauth":
+            OAUTH_FORCE_AUTH = True
+            logger.info("Force re-auth enabled — next tool call will force authentication")
+            return {"result": "🔐 Re-authorization enabled. The next tool call will force a fresh OAuth flow."}
         
         logger.info("Processing prompt (length=%d)", len(prompt))
         logger.debug("Prompt: %s", prompt[:200] + "..." if len(prompt) > 200 else prompt)
@@ -1105,7 +1313,10 @@ def invoke(payload, context):
         
         agent = _get_agent()
         
-        logger.info("Invoking agent with prompt")
+        # Inject conversation history for context continuity
+        agent.messages = list(_conversation_history)
+        
+        logger.info("Invoking agent with prompt (history: %d messages)", len(_conversation_history))
         if system:
             response = agent(prompt, system=system)
         else:
@@ -1124,17 +1335,46 @@ def invoke(payload, context):
                     parts.append(text)
             result = "\n".join(parts) if parts else str(result)
         
+        # Append this turn to conversation history (text only, no tool blocks)
+        _conversation_history.append({"role": "user", "content": [{"text": prompt}]})
+        _conversation_history.append({"role": "assistant", "content": [{"text": str(result)[:2000]}]})
+        
         logger.debug("Agent response (length=%d)", len(str(result)))
         
         # Check for OAuth authorization URL
         # Prefer auth_url captured during tool calls; fall back to parsing the model text.
         auth_url = _get_request_auth_url() or _extract_auth_url(result)
         response_payload = {"result": result}
+        
+        # Include tools used in this invocation
+        tools_used = _current_tools_used
+        tools_str = " | ".join(tools_used) if tools_used else "none"
+        
+        # Prepend metadata to result (region + tools)
+        meta_line = f"🔧 Tools Used: {tools_str} | Region: {AWS_REGION}"
+        if isinstance(result, str):
+            result = meta_line + "\n\n" + result
+        response_payload = {"result": result}
+        
+        # Include memory status only on the first invocation of this microVM
+        if _memory_loaded_this_request is not None:
+            response_payload["memory_loaded"] = _memory_loaded_this_request
+        
         if auth_url:
             logger.info("Including OAuth URL in response: %s", auth_url)
             response_payload["auth_url"] = auth_url
         
         logger.info("HTTP invocation successful")
+        
+        # Save turn to memory (async, non-blocking)
+        if MEMORY_ID and not auth_url:
+            actor_for_save = _get_user_email() or "anonymous"
+            session_for_save = getattr(_request_local, "session_id", "") or "default"
+            # Use the raw result (without metadata prefix) for memory
+            raw_result = str(response.message) if hasattr(response, 'message') else str(result)
+            if actor_for_save != "anonymous":
+                memory_save_turn(actor_for_save, session_for_save, prompt, raw_result[:2000])
+        
         logger.info("=== DIAGNOSTIC LOGGING END (SUCCESS) ===")
         return response_payload
         

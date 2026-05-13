@@ -1,0 +1,142 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  AgentCore Memory resource for Project Redwood. Deploy per-region.
+  Primary region includes a self-managed strategy for cross-region replication.
+  DR region is a plain short-term memory (target for replicated events).
+
+Parameters:
+  StackPrefix:
+    Type: String
+    Default: acore-redwood
+
+  MemoryName:
+    Type: String
+    Description: Memory resource name (must match [a-zA-Z][a-zA-Z0-9_]{0,47})
+
+  EventExpiryDays:
+    Type: Number
+    Default: 30
+    Description: Days before short-term events auto-expire
+
+  IsPrimary:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: If true, includes self-managed strategy for replication export
+
+  PayloadBucketName:
+    Type: String
+    Default: ""
+    Description: S3 bucket for self-managed strategy payload delivery (primary only)
+
+  SnsTopicArn:
+    Type: String
+    Default: ""
+    Description: SNS topic ARN for self-managed strategy notifications (primary only)
+
+  TriggerMessageCount:
+    Type: Number
+    Default: 4
+    Description: Trigger self-managed strategy after N messages
+
+  TriggerIdleTimeout:
+    Type: Number
+    Default: 30
+    Description: Trigger after N seconds of session inactivity
+
+Conditions:
+  IsPrimaryRegion: !Equals [!Ref IsPrimary, "true"]
+
+Resources:
+
+  # ============================================================
+  # IAM Role for Memory Execution
+  # ============================================================
+  MemoryExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${StackPrefix}-memory-exec-role-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: MemoryExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - !If
+                - IsPrimaryRegion
+                - Sid: S3PayloadDelivery
+                  Effect: Allow
+                  Action:
+                    - s3:GetBucketLocation
+                    - s3:PutObject
+                  Resource:
+                    - !Sub "arn:aws:s3:::${PayloadBucketName}"
+                    - !Sub "arn:aws:s3:::${PayloadBucketName}/*"
+                - !Ref AWS::NoValue
+              - !If
+                - IsPrimaryRegion
+                - Sid: SNSNotifications
+                  Effect: Allow
+                  Action:
+                    - sns:GetTopicAttributes
+                    - sns:Publish
+                  Resource: !Ref SnsTopicArn
+                - !Ref AWS::NoValue
+
+  # ============================================================
+  # AgentCore Memory
+  # ============================================================
+  Memory:
+    Type: AWS::BedrockAgentCore::Memory
+    DependsOn: MemoryExecutionRole
+    Properties:
+      Name: !Ref MemoryName
+      Description: !If
+        - IsPrimaryRegion
+        - !Sub "Primary short-term memory with replication export (${AWS::Region})"
+        - !Sub "DR short-term memory - receives replicated events (${AWS::Region})"
+      EventExpiryDuration: !Ref EventExpiryDays
+      MemoryExecutionRoleArn: !GetAtt MemoryExecutionRole.Arn
+      MemoryStrategies: !If
+        - IsPrimaryRegion
+        - - CustomMemoryStrategy:
+              Name: STMReplicationExport
+              Description: Exports short-term events to S3 for cross-region replication
+              Configuration:
+                SelfManagedConfiguration:
+                  TriggerConditions:
+                    - MessageBasedTrigger:
+                        MessageCount: !Ref TriggerMessageCount
+                    - TimeBasedTrigger:
+                        IdleSessionTimeout: !Ref TriggerIdleTimeout
+                  HistoricalContextWindowSize: 0
+                  InvocationConfiguration:
+                    PayloadDeliveryBucketName: !Ref PayloadBucketName
+                    TopicArn: !Ref SnsTopicArn
+        - !Ref AWS::NoValue
+
+Outputs:
+  MemoryId:
+    Description: AgentCore Memory ID
+    Value: !Ref Memory
+    Export:
+      Name: !Sub "${StackPrefix}-memory-id-${AWS::Region}"
+
+  MemoryExecutionRoleArn:
+    Description: Memory execution role ARN
+    Value: !GetAtt MemoryExecutionRole.Arn
+    Export:
+      Name: !Sub "${StackPrefix}-memory-role-arn-${AWS::Region}"

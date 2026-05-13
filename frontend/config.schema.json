@@ -42,8 +42,8 @@
       "properties": {
         "agentcoreEndpoint": {
           "type": "string",
-          "pattern": "^https://",
-          "description": "AgentCore REST API endpoint URL"
+          "pattern": "^(https://|/)",
+          "description": "AgentCore REST API endpoint URL (absolute https:// or relative /api/...)"
         },
         "wsSignEndpoint": {
           "type": "string",

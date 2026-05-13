@@ -54,13 +54,33 @@ Parameters:
     Default: ''
     Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
 
+  CreateDDBTable:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Whether to create the DDB table (false for DR region — uses Global Table replica)
+
+  DRRegion:
+    Type: String
+    Default: ''
+    Description: DR region for Global Table replica (leave empty to skip replica creation)
+
+Conditions:
+  ShouldCreateTable: !Equals [!Ref CreateDDBTable, 'true']
+  HasDRRegion: !Not [!Equals [!Ref DRRegion, '']]
+  CreateWithReplica: !And
+    - !Condition ShouldCreateTable
+    - !Condition HasDRRegion
+
 Resources:
-  # DynamoDB Table with GSIs for order management
+  # DynamoDB Global Table with GSIs for order management
+  # Primary region creates the table + replica; DR region skips (uses replica)
   OrdersTable:
-    Type: AWS::DynamoDB::Table
+    Type: AWS::DynamoDB::GlobalTable
+    Condition: ShouldCreateTable
     Properties:
       TableName: !Sub '${Environment}-${TableName}-${DeploymentSuffix}'
-      BillingMode: PAY_PER_REQUEST  # On-demand billing - no capacity planning needed
+      BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: order_id
           AttributeType: S
@@ -73,14 +93,13 @@ Resources:
       KeySchema:
         - AttributeName: order_id
           KeyType: HASH
-      # Global Secondary Indexes for efficient querying by date, item, and status
       GlobalSecondaryIndexes:
         - IndexName: OrderDateIndex
           KeySchema:
             - AttributeName: order_date
               KeyType: HASH
           Projection:
-            ProjectionType: ALL  # Include all attributes for flexibility
+            ProjectionType: ALL
         - IndexName: ItemNameIndex
           KeySchema:
             - AttributeName: item_name
@@ -93,23 +112,39 @@ Resources:
               KeyType: HASH
           Projection:
             ProjectionType: ALL
-      PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true  # Enable backup for data protection
-      DeletionProtectionEnabled: false  # Allow deletion in non-prod environments
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Purpose
-          Value: OrderManagement
-        - Key: ManagedBy
-          Value: CloudFormation
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Replicas:
+        - Region: !Ref AWS::Region
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+          Tags:
+            - Key: Environment
+              Value: !Ref Environment
+            - Key: Purpose
+              Value: OrderManagement
+            - Key: ManagedBy
+              Value: CloudFormation
+        - !If
+          - HasDRRegion
+          - Region: !Ref DRRegion
+            PointInTimeRecoverySpecification:
+              PointInTimeRecoveryEnabled: true
+            Tags:
+              - Key: Environment
+                Value: !Ref Environment
+              - Key: Purpose
+                Value: OrderManagement-DR
+              - Key: ManagedBy
+                Value: CloudFormation
+          - !Ref AWS::NoValue
 
   # IAM Role for Lambda Functions
   # Required Permissions: DynamoDB read/write, CloudWatch Logs
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-orders-lambda-role-${DeploymentSuffix}'
+      RoleName: !Sub '${Environment}-orders-lambda-role-${DeploymentSuffix}-${AWS::Region}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -132,8 +167,14 @@ Resources:
                   - dynamodb:Scan
                   - dynamodb:Query
                 Resource:
-                  - !GetAtt OrdersTable.Arn
-                  - !Sub '${OrdersTable.Arn}/index/*'  # Include GSI access
+                  - !If
+                    - ShouldCreateTable
+                    - !GetAtt OrdersTable.Arn
+                    - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Environment}-${TableName}-${DeploymentSuffix}'
+                  - !If
+                    - ShouldCreateTable
+                    - !Sub '${OrdersTable.Arn}/index/*'
+                    - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Environment}-${TableName}-${DeploymentSuffix}/index/*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -153,7 +194,7 @@ Resources:
       MemorySize: 256
       Environment:
         Variables:
-          DYNAMODB_TABLE_NAME: !Ref OrdersTable
+          DYNAMODB_TABLE_NAME: !Sub '${Environment}-${TableName}-${DeploymentSuffix}'
       Code:
         S3Bucket: !Ref LambdaCodeBucket
         S3Key: !Sub '${LambdaCodeKey}get_orders.zip'
@@ -176,7 +217,7 @@ Resources:
       MemorySize: 256
       Environment:
         Variables:
-          DYNAMODB_TABLE_NAME: !Ref OrdersTable
+          DYNAMODB_TABLE_NAME: !Sub '${Environment}-${TableName}-${DeploymentSuffix}'
       Code:
         S3Bucket: !Ref LambdaCodeBucket
         S3Key: !Sub '${LambdaCodeKey}create_order.zip'
@@ -199,7 +240,7 @@ Resources:
       MemorySize: 256
       Environment:
         Variables:
-          DYNAMODB_TABLE_NAME: !Ref OrdersTable
+          DYNAMODB_TABLE_NAME: !Sub '${Environment}-${TableName}-${DeploymentSuffix}'
       Code:
         S3Bucket: !Ref LambdaCodeBucket
         S3Key: !Sub '${LambdaCodeKey}update_order.zip'
@@ -227,7 +268,7 @@ Resources:
   AuthorizerExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-orders-authorizer-role-${DeploymentSuffix}'
+      RoleName: !Sub '${Environment}-orders-authorizer-role-${DeploymentSuffix}-${AWS::Region}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -322,7 +363,7 @@ Resources:
   ApiGatewayAuthorizerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-api-gw-authorizer-role-${DeploymentSuffix}'
+      RoleName: !Sub '${Environment}-api-gw-authorizer-role-${DeploymentSuffix}-${AWS::Region}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -461,14 +502,14 @@ Outputs:
   # DynamoDB Table Name - Used by Lambda functions and monitoring
   DynamoDBTableName:
     Description: Name of the DynamoDB orders table
-    Value: !Ref OrdersTable
+    Value: !Sub '${Environment}-${TableName}-${DeploymentSuffix}'
     Export:
       Name: !Sub '${AWS::StackName}-DynamoDBTableName'
 
   # DynamoDB Table ARN - Used for IAM policies and cross-stack references
   DynamoDBTableArn:
     Description: ARN of the DynamoDB orders table
-    Value: !GetAtt OrdersTable.Arn
+    Value: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Environment}-${TableName}-${DeploymentSuffix}'
     Export:
       Name: !Sub '${AWS::StackName}-DynamoDBTableArn'
 

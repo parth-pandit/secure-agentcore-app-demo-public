@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Global stack — CloudFront + S3 + Lambda@Edge (deploy once after regional stacks)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+  TemplatesBucket:
+    Type: String
+    MinLength: 3
+
+  DeploymentSuffix:
+    Type: String
+    Default: ''
+
+  CloudFrontPriceClass:
+    Type: String
+    Default: PriceClass_100
+    AllowedValues: [PriceClass_100, PriceClass_200, PriceClass_All]
+
+  SslCertificateArn:
+    Type: String
+    Default: ''
+
+  LambdaEdgeArn:
+    Type: String
+    Default: ''
+    Description: Lambda@Edge ARN for /api/* routing
+
+Resources:
+  FrontendStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucket}.s3.${AWS::Region}.amazonaws.com/templates/frontend-stack.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        BucketName: !Sub '${Environment}-frontend-${AWS::AccountId}-${DeploymentSuffix}'
+        CloudFrontPriceClass: !Ref CloudFrontPriceClass
+        SslCertificateArn: !Ref SslCertificateArn
+        DeploymentSuffix: !Ref DeploymentSuffix
+        LambdaEdgeArn: !Ref LambdaEdgeArn
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: Frontend
+
+Outputs:
+  CloudFrontDomainName:
+    Value: !GetAtt FrontendStack.Outputs.CloudFrontDomainName
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontDomainName'
+
+  CloudFrontDistributionId:
+    Value: !GetAtt FrontendStack.Outputs.CloudFrontDistributionId
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontDistributionId'
+
+  S3BucketName:
+    Value: !GetAtt FrontendStack.Outputs.S3BucketName
+    Export:
+      Name: !Sub '${AWS::StackName}-S3BucketName'

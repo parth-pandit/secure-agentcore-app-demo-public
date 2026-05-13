@@ -1,0 +1,77 @@
+[
+  {
+    "_comment": "--- Identity Provider (Azure Entra ID) ---"
+  },
+  {
+    "ParameterKey": "IdpDiscoveryUrl",
+    "ParameterValue": "https://login.microsoftonline.com/REPLACE_WITH_TENANT_ID/v2.0/.well-known/openid-configuration"
+  },
+  {
+    "ParameterKey": "GatewayIdpClientId",
+    "ParameterValue": "REPLACE_WITH_GATEWAY_CLIENT_ID"
+  },
+  {
+    "ParameterKey": "AgentIdpClientId",
+    "ParameterValue": "REPLACE_WITH_AGENT_CLIENT_ID"
+  },
+  {
+    "ParameterKey": "TargetIdpClientId",
+    "ParameterValue": "REPLACE_WITH_TARGET_CLIENT_ID"
+  },
+  {
+    "ParameterKey": "TargetIdpClientSecret",
+    "ParameterValue": "REPLACE_WITH_TARGET_CLIENT_SECRET"
+  },
+  {
+    "ParameterKey": "TargetIdpTenantId",
+    "ParameterValue": "REPLACE_WITH_TENANT_ID"
+  },
+  {
+    "ParameterKey": "JwksUrl",
+    "ParameterValue": "https://login.microsoftonline.com/REPLACE_WITH_TENANT_ID/discovery/v2.0/keys"
+  },
+  {
+    "ParameterKey": "TokenIssuer",
+    "ParameterValue": "https://login.microsoftonline.com/REPLACE_WITH_TENANT_ID/v2.0"
+  },
+  {
+    "ParameterKey": "TokenAudience",
+    "ParameterValue": "REPLACE_WITH_TARGET_CLIENT_ID"
+  },
+  {
+    "_comment": "--- Authorization ---"
+  },
+  {
+    "ParameterKey": "AuthorizedUsers",
+    "ParameterValue": "{\"user@example.com\": {\"permissions\": [\"GET\", \"POST\", \"PUT\"], \"resources\": [\"*\"]}}"
+  },
+  {
+    "_comment": "--- Model & Logging ---"
+  },
+  {
+    "ParameterKey": "BedrockModelId",
+    "ParameterValue": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+  },
+  {
+    "ParameterKey": "LogLevel",
+    "ParameterValue": "DEBUG"
+  },
+  {
+    "_comment": "--- CloudFront ---"
+  },
+  {
+    "ParameterKey": "CloudFrontPriceClass",
+    "ParameterValue": "PriceClass_100"
+  },
+  {
+    "ParameterKey": "SslCertificateArn",
+    "ParameterValue": ""
+  },
+  {
+    "_comment": "--- Notifications ---"
+  },
+  {
+    "ParameterKey": "SnsTopicArn",
+    "ParameterValue": ""
+  }
+]
