@@ -103,7 +103,7 @@ Resources:
   GatewayRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-agentcore-gateway-role-${DeploymentSuffix}'
+      RoleName: !Sub '${Environment}-agentcore-gateway-role-${DeploymentSuffix}-${AWS::Region}'
       Description: IAM role for AgentCore Gateway
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -125,7 +125,7 @@ Resources:
   RuntimeRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-agentcore-runtime-role-${DeploymentSuffix}'
+      RoleName: !Sub '${Environment}-agentcore-runtime-role-${DeploymentSuffix}-${AWS::Region}'
       Description: IAM role for AgentCore Runtime with least-privilege permissions
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -212,6 +212,14 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:s3:::${S3Bucket}'
                   - !Sub 'arn:aws:s3:::${S3Bucket}/*'
+              # Memory permissions (cross-region: allow both us-east-1 and us-east-2)
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateEvent
+                  - bedrock-agentcore:ListSessions
+                  - bedrock-agentcore:ListEvents
+                Resource:
+                  - !Sub 'arn:aws:bedrock-agentcore:*:${AWS::AccountId}:memory/*'
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -223,7 +231,7 @@ Resources:
   OAuthCallbackLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-oauth-cb-lambda-role-${DeploymentSuffix}'
+      RoleName: !Sub '${Environment}-oauth-cb-lambda-role-${DeploymentSuffix}-${AWS::Region}'
       Description: Execution role for OAuth Callback Lambda function
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -353,7 +361,7 @@ Resources:
   PolicyEngine:
     Type: AWS::BedrockAgentCore::PolicyEngine
     Properties:
-      Name: !Sub '${Environment}_orders_gateway_policy_${DeploymentSuffix}'
+      Name: !Sub '${Environment}_orders_gw_policy_${DeploymentSuffix}'
       Description: Cedar policy engine for the AgentCore Orders Gateway — evaluates permit and forbid policies on every gateway request
 
   # --------------------------------------------------------------------------
@@ -561,7 +569,7 @@ Resources:
   AgentProxyLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${Environment}-agent-proxy-lambda-role-${DeploymentSuffix}'
+      RoleName: !Sub '${Environment}-agent-proxy-lambda-role-${DeploymentSuffix}-${AWS::Region}'
       Description: Execution role for Agent Proxy Lambda function
       AssumeRolePolicyDocument:
         Version: '2012-10-17'

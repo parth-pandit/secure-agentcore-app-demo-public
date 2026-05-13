@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Lambda@Edge origin router for multi-region failover.
+  Must be deployed in us-east-1 (Lambda@Edge requirement).
+  Queries ARC routing control to route /api/* to active region.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+
+  DeploymentSuffix:
+    Type: String
+
+  DeploymentId:
+    Type: String
+    Description: Short unique ID per deployment (e.g., timestamp) to avoid Lambda@Edge name collisions
+
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing the Lambda@Edge code
+
+  LambdaCodeKey:
+    Type: String
+    Default: lambda-edge/origin-router.zip
+
+Resources:
+
+  # IAM Role for Lambda@Edge
+  LambdaEdgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-lambda-edge-role-${DeploymentSuffix}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - edgelambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ArcReadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - route53-recovery-cluster:GetRoutingControlState
+                Resource: '*'
+
+  # Lambda@Edge Function
+  OriginRouterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-origin-router-${DeploymentSuffix}-${DeploymentId}'
+      Runtime: nodejs20.x
+      Handler: origin_router.handler
+      Role: !GetAtt LambdaEdgeRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Timeout: 10
+      MemorySize: 128
+      Description: !Sub 'Lambda@Edge origin router - ARC failover (${DeploymentId})'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # Version (required for Lambda@Edge association)
+  OriginRouterVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref OriginRouterFunction
+      Description: !Sub 'Deployed ${DeploymentSuffix}'
+
+Outputs:
+  LambdaEdgeArn:
+    Description: Lambda@Edge function ARN with version (for CloudFront association)
+    Value: !Ref OriginRouterVersion
+    Export:
+      Name: !Sub '${Environment}-lambda-edge-arn-${DeploymentSuffix}'
+
+  LambdaEdgeFunctionName:
+    Description: Lambda@Edge function name
+    Value: !Ref OriginRouterFunction

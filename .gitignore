@@ -103,3 +103,22 @@ infrastructure/cloudformation/agentcore-gateway-parameters.json
 .kiro/specs/*/.config.kiro
 .kiro/specs/*/bugfix.md
 infrastructure/scripts/quick-command-reference.txt
+
+# Multi-region deployment config (contains account-specific values)
+infrastructure/deploy-config-multi-region.sh
+infrastructure/cloudformation/parameters/dev-parameters-multi-region.json
+infrastructure/cloudformation/parameters/dev-parameters.json
+infrastructure/cloudformation/parameters/staging-parameters*.json
+infrastructure/cloudformation/parameters/prod-parameters*.json
+
+# Lambda packages (built artifacts)
+infrastructure/lambda-packages/
+
+# Frontend generated config
+frontend/src/config.generated.js
+
+# Node modules
+node_modules/
+
+# Temporary build artifacts
+.lambda-build/

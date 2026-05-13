@@ -38,6 +38,11 @@ Parameters:
     Default: ''
     Description: Timestamp suffix (yyyymmddHHMM) to make resource names unique across deployments
 
+  LambdaEdgeArn:
+    Type: String
+    Default: ''
+    Description: Lambda@Edge function ARN (with version) for /api/* routing. Leave empty to skip.
+
 # ============================================================================
 # CONDITIONS
 # ============================================================================
@@ -47,6 +52,9 @@ Conditions:
   
   # Use SSL certificate if ARN is provided
   HasSslCertificate: !Not [!Equals [!Ref SslCertificateArn, '']]
+
+  # Enable /api/* behavior if Lambda@Edge ARN is provided
+  HasLambdaEdge: !Not [!Equals [!Ref LambdaEdgeArn, '']]
 
 # ============================================================================
 # RESOURCES
@@ -168,6 +176,47 @@ Resources:
             S3OriginConfig:
               OriginAccessIdentity: ''
             OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+          # Dummy API origin — Lambda@Edge overrides this at request time
+          - !If
+            - HasLambdaEdge
+            - Id: ApiOrigin
+              DomainName: bedrock-agentcore.us-east-1.amazonaws.com
+              CustomOriginConfig:
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+                OriginSSLProtocols:
+                  - TLSv1.2
+            - !Ref AWS::NoValue
+        
+        # --------------------------------------------------------------------------
+        # /api/* Cache Behavior (Lambda@Edge routes to active region)
+        # --------------------------------------------------------------------------
+        CacheBehaviors:
+          - !If
+            - HasLambdaEdge
+            - PathPattern: '/api/*'
+              TargetOriginId: ApiOrigin
+              ViewerProtocolPolicy: redirect-to-https
+              AllowedMethods:
+                - GET
+                - HEAD
+                - OPTIONS
+                - PUT
+                - POST
+                - PATCH
+                - DELETE
+              CachedMethods:
+                - GET
+                - HEAD
+              # No caching for API requests
+              CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # Managed-CachingDisabled
+              # Forward all headers/cookies to origin
+              OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # Managed-AllViewer
+              LambdaFunctionAssociations:
+                - EventType: origin-request
+                  LambdaFunctionARN: !Ref LambdaEdgeArn
+                  IncludeBody: true
+            - !Ref AWS::NoValue
         
         # --------------------------------------------------------------------------
         # Default Cache Behavior

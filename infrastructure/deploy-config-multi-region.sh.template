@@ -1,0 +1,129 @@
+#!/bin/bash
+################################################################################
+# Project Redwood — Multi-Region Deployment Configuration (TEMPLATE)
+#
+# Copy this file to deploy-config-multi-region.sh and fill in your values:
+#   cp deploy-config-multi-region.sh.template deploy-config-multi-region.sh
+#
+# DO NOT commit the filled-in version to git.
+# Sourced by infrastructure/scripts/deploy-stack-multi-region.sh and memory/deploy.sh.
+################################################################################
+
+################################################################################
+# SECTION 1: USER-CONFIGURABLE VALUES
+# Modify these when deploying to a new account, environment, or stack.
+################################################################################
+
+# --- AWS Profile ---
+# Set to your AWS CLI profile name to deploy to a specific account.
+# Leave empty ("") to use the default profile / environment credentials.
+# This affects ALL AWS CLI and boto3 calls (including sub-scripts).
+AWS_PROFILE=""
+
+# --- Deployment Identity ---
+# SUFFIX: Unique identifier for this deployment. Lowercase alphanumeric only
+# (no hyphens, underscores, or special chars). Used in S3 buckets, stack names,
+# and resource names. Must be unique per account to avoid collisions.
+# Examples: "redwood", "unicorn", "demo01"
+export SUFFIX="CHANGEME"
+
+# --- Environment ---
+# Controls naming prefix and allowed values in CFN parameters.
+export ENVIRONMENT="dev"
+
+# --- Regions ---
+export PRIMARY_REGION="us-east-1"
+export DR_REGION="us-east-2"
+
+# --- Bedrock Model ---
+export BEDROCK_MODEL_ID="us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+# --- ARC (Route53 Application Recovery Controller) ---
+# Pre-requisite: Create a routing control in ARC before deploying.
+# On = primary region active, Off = failover to DR.
+export ARC_ROUTING_CONTROL_ARN="arn:aws:route53-recovery-control::ACCOUNT_ID:controlpanel/PANEL_ID/routingcontrol/CONTROL_ID"
+export ARC_ROUTING_CONTROL_NAME="my-app-ue1-active"
+export ARC_CLUSTER_ENDPOINTS=(
+    "https://XXXXXXXX.route53-recovery-cluster.us-west-2.amazonaws.com/v1"
+    "https://XXXXXXXX.route53-recovery-cluster.eu-west-1.amazonaws.com/v1"
+    "https://XXXXXXXX.route53-recovery-cluster.ap-northeast-1.amazonaws.com/v1"
+    "https://XXXXXXXX.route53-recovery-cluster.ap-southeast-2.amazonaws.com/v1"
+    "https://XXXXXXXX.route53-recovery-cluster.us-east-1.amazonaws.com/v1"
+)
+
+# --- Memory ---
+export MEMORY_EXPIRY_DAYS=30
+export MEMORY_RECALL_MAX_EVENTS=10
+
+################################################################################
+# SECTION 2: DERIVED VALUES — No need to modify below this line
+# Only tweak if you know what you are doing.
+################################################################################
+
+# --- AWS Profile activation ---
+if [ -n "${AWS_PROFILE}" ]; then
+    export AWS_PROFILE
+else
+    unset AWS_PROFILE 2>/dev/null || true
+fi
+
+# --- AWS Account (auto-resolved from active profile) ---
+export AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text 2>/dev/null)}"
+
+# --- S3 Buckets (derived: {env}-{purpose}-{suffix}-{region}) ---
+export CFN_TEMPLATES_BUCKET="${ENVIRONMENT}-cfn-templates-${SUFFIX}-${PRIMARY_REGION}"
+export CFN_TEMPLATES_BUCKET_DR="${ENVIRONMENT}-cfn-templates-${SUFFIX}-${DR_REGION}"
+export LAMBDA_BUCKET_PRIMARY="${ENVIRONMENT}-lambda-code-${SUFFIX}-${PRIMARY_REGION}"
+export LAMBDA_BUCKET_DR="${ENVIRONMENT}-lambda-code-${SUFFIX}-${DR_REGION}"
+
+# --- Stack Names ---
+export STACK_NAME_PRIMARY="secure-agentcore-app-${ENVIRONMENT}-${SUFFIX}"
+export STACK_NAME_DR="secure-agentcore-app-${ENVIRONMENT}-${SUFFIX}-dr"
+
+# --- Secrets & Roles ---
+export GATEWAY_SECRET_NAME="${ENVIRONMENT}-gateway-secret-${SUFFIX}"
+export RUNTIME_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${ENVIRONMENT}-agentcore-runtime-role-${SUFFIX}-${PRIMARY_REGION}"
+
+# --- Runtime ---
+export RUNTIME_S3_KEY="lambda-code/order-agent.zip"
+
+################################################################################
+# SECTION 3: HELPER FUNCTIONS
+################################################################################
+
+# Get Lambda bucket for a given region
+get_lambda_bucket() {
+    local region="${1}"
+    echo "${ENVIRONMENT}-lambda-code-${SUFFIX}-${region}"
+}
+
+# Get CFN templates bucket for a given region
+get_cfn_templates_bucket() {
+    local region="${1}"
+    echo "${ENVIRONMENT}-cfn-templates-${SUFFIX}-${region}"
+}
+
+# Get memory stack name
+get_memory_stack_name() {
+    echo "${ENVIRONMENT}-agentcore-memory-${SUFFIX}"
+}
+
+# Get replication stack name
+get_replication_stack_name() {
+    echo "${ENVIRONMENT}-agentcore-memory-replication-${SUFFIX}"
+}
+
+# Ensure S3 bucket exists in a region (creates if missing)
+ensure_bucket() {
+    local bucket="${1}"
+    local region="${2}"
+    if ! aws s3api head-bucket --bucket "${bucket}" 2>/dev/null; then
+        echo "  Creating bucket: ${bucket} (${region})"
+        if [ "${region}" = "us-east-1" ]; then
+            aws s3api create-bucket --bucket "${bucket}" --region "${region}" > /dev/null
+        else
+            aws s3api create-bucket --bucket "${bucket}" --region "${region}" \
+                --create-bucket-configuration LocationConstraint="${region}" > /dev/null
+        fi
+    fi
+}

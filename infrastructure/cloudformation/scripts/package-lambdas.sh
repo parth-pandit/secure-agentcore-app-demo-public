@@ -120,7 +120,7 @@ package_backend_lambda() {
     # This creates the proper Lambda deployment package structure
     if [ -f "$BACKEND_LAMBDAS_DIR/requirements.txt" ]; then
         print_info "Installing dependencies for ${function_name}..."
-        pip install -q --target "$temp_dir" -r "$BACKEND_LAMBDAS_DIR/requirements.txt" --upgrade
+        $PIP install -q --target "$temp_dir" -r "$BACKEND_LAMBDAS_DIR/requirements.txt" --python-version 3.9
     fi
     
     # Create zip file with all contents at root level
@@ -170,7 +170,7 @@ package_ai_agent_lambda() {
         if [ -f "$AI_AGENT_SRC_DIR/requirements.txt" ]; then
             print_info "Installing dependencies for ${function_name}..."
             # Use --ignore-requires-python to handle version mismatches
-            pip install -q --target "$temp_dir" -r "$AI_AGENT_SRC_DIR/requirements.txt" --upgrade 2>/dev/null || {
+            $PIP install -q --target "$temp_dir" -r "$AI_AGENT_SRC_DIR/requirements.txt" --python-version 3.12 2>/dev/null || {
                 print_warning "Some dependencies could not be installed. Package may be incomplete."
             }
         fi
@@ -301,8 +301,14 @@ main() {
         exit 1
     fi
     
-    if ! command -v pip &> /dev/null; then
-        print_error "pip is required but not installed"
+    if command -v uv &> /dev/null; then
+        PIP="uv pip"
+    elif command -v pip3 &> /dev/null; then
+        PIP="pip3"
+    elif command -v pip &> /dev/null; then
+        PIP="pip"
+    else
+        print_error "pip/pip3/uv is required but not installed"
         exit 1
     fi
     

@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Regional stack — Backend API + AgentCore (deploy per-region)'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+  TemplatesBucket:
+    Type: String
+    MinLength: 3
+
+  LambdaCodeBucket:
+    Type: String
+    MinLength: 3
+
+  IdpDiscoveryUrl:
+    Type: String
+    MinLength: 10
+
+  GatewayIdpClientId:
+    Type: String
+    MinLength: 3
+
+  AgentIdpClientId:
+    Type: String
+    MinLength: 3
+
+  TargetIdpClientId:
+    Type: String
+    MinLength: 3
+
+  TargetIdpClientSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 3
+
+  TargetIdpTenantId:
+    Type: String
+    MinLength: 3
+
+  JwksUrl:
+    Type: String
+    MinLength: 10
+
+  TokenIssuer:
+    Type: String
+    MinLength: 10
+
+  TokenAudience:
+    Type: String
+    MinLength: 3
+
+  AuthorizedUsers:
+    Type: String
+    Default: '{}'
+
+  BedrockModelId:
+    Type: String
+    Default: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [DEBUG, INFO, WARNING, ERROR]
+
+  DeploymentSuffix:
+    Type: String
+    Default: ''
+
+  CreateDDBTable:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+
+  DRRegion:
+    Type: String
+    Default: ''
+
+Resources:
+  BackendAPIStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucket}.s3.${AWS::Region}.amazonaws.com/templates/backend-api-stack.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        LambdaCodeBucket: !Ref LambdaCodeBucket
+        JwksUrl: !Ref JwksUrl
+        TokenIssuer: !Ref TokenIssuer
+        TokenAudience: !Ref TokenAudience
+        AuthorizedUsers: !Ref AuthorizedUsers
+        DeploymentSuffix: !Ref DeploymentSuffix
+        CreateDDBTable: !Ref CreateDDBTable
+        DRRegion: !Ref DRRegion
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: OrdersAPI
+      TimeoutInMinutes: 30
+
+  AgentCoreAppStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: BackendAPIStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucket}.s3.${AWS::Region}.amazonaws.com/templates/agentcore-app-stack.yaml'
+      Parameters:
+        Environment: !Ref Environment
+        IdpDiscoveryUrl: !Ref IdpDiscoveryUrl
+        GatewayIdpClientId: !Ref GatewayIdpClientId
+        AgentIdpClientId: !Ref AgentIdpClientId
+        TargetIdpClientId: !Ref TargetIdpClientId
+        TargetIdpClientSecret: !Ref TargetIdpClientSecret
+        TargetIdpTenantId: !Ref TargetIdpTenantId
+        S3Bucket: !Ref LambdaCodeBucket
+        ApiUrl: !GetAtt BackendAPIStack.Outputs.ApiUrl
+        DeploymentSuffix: !Ref DeploymentSuffix
+        BedrockModelId: !Ref BedrockModelId
+        LogLevel: !Ref LogLevel
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: AgentCore
+      TimeoutInMinutes: 30
+
+Outputs:
+  ApiUrl:
+    Value: !GetAtt BackendAPIStack.Outputs.ApiUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiUrl'
+
+  ApiGatewayId:
+    Value: !GetAtt BackendAPIStack.Outputs.ApiGatewayId
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayId'
+
+  DynamoDBTableName:
+    Value: !GetAtt BackendAPIStack.Outputs.DynamoDBTableName
+    Export:
+      Name: !Sub '${AWS::StackName}-DynamoDBTableName'
+
+  GatewayId:
+    Value: !GetAtt AgentCoreAppStack.Outputs.GatewayId
+    Export:
+      Name: !Sub '${AWS::StackName}-GatewayId'
+
+  GatewayUrl:
+    Value: !GetAtt AgentCoreAppStack.Outputs.GatewayUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-GatewayUrl'
+
+  AgentRuntimeId:
+    Value: !GetAtt AgentCoreAppStack.Outputs.AgentRuntimeId
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentRuntimeId'
+
+  AgentRuntimeArn:
+    Value: !GetAtt AgentCoreAppStack.Outputs.AgentRuntimeArn
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentRuntimeArn'
+
+  AgentProxyFunctionUrl:
+    Value: !GetAtt AgentCoreAppStack.Outputs.AgentProxyUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-AgentProxyFunctionUrl'
+
+  CredentialProviderArn:
+    Value: !GetAtt AgentCoreAppStack.Outputs.CredentialProviderArn
+    Export:
+      Name: !Sub '${AWS::StackName}-CredentialProviderArn'
+
+  OAuthCallbackUrl:
+    Value: !GetAtt AgentCoreAppStack.Outputs.OAuthCallbackUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-OAuthCallbackUrl'
+
+  Region:
+    Value: !Ref AWS::Region
+
+  StackName:
+    Value: !Ref AWS::StackName
