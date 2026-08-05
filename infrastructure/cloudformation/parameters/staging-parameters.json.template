@@ -35,7 +35,7 @@
     "ParameterValue": "REPLACE_WITH_TARGET_CLIENT_ID"
   },
   {
-    "_comment": "Azure App Registration Client Secret for the target API — store in AWS Secrets Manager in production; never commit the real value.",
+    "_comment": "Azure App Registration Client Secret for the target API — store in AWS Secrets Manager in production; used by AgentCore Identity; never commit the real value.",
     "ParameterKey": "TargetIdpClientSecret",
     "ParameterValue": "REPLACE_WITH_TARGET_CLIENT_SECRET"
   },
@@ -60,7 +60,7 @@
     "ParameterValue": "REPLACE_WITH_APPLICATION_ID"
   },
   {
-    "_comment": "JSON string mapping authorized user identities to their permissions. Use '{}' to allow all authenticated users, or '{\"user@example.com\": [\"read\", \"write\"]}' to restrict access.",
+    "_comment": "JSON string mapping authorized user identities to their permissions. Use '{}' to allow all authenticated users, or '{\"super-user@example.com\": {\"permissions\": [\"GET\", \"POST\", \"PUT\"], \"resources\": [\"*\"] }, \"readonly-user@example.com\": {\"permissions\": [\"GET\"],\"resources\": [\"*\"]}}' to restrict access.",
     "ParameterKey": "AuthorizedUsers",
     "ParameterValue": "{}"
   },

@@ -14,43 +14,49 @@
 #   - Invalidates the CloudFront cache
 #
 # Usage:
-#   ./deploy-stack.sh <stack-name> <templates-bucket> <lambda-bucket> [options]
+#   ./deploy-stack.sh <stack-name> [options]
 #
 # Arguments:
 #   stack-name         Name of the CloudFormation stack to create/update
-#   templates-bucket   S3 bucket name for storing CloudFormation templates
-#   lambda-bucket      S3 bucket name for storing Lambda deployment packages
 #
 # Options:
-#   --dry-run         Create changeset without executing (for review).
-#                     Post-deployment steps are skipped in dry-run mode.
-#   --no-rollback     Disable automatic rollback on failure — stack is left in
-#                     its failed state so you can inspect events and resources
-#                     before deleting manually. Useful for debugging new deployments.
-#                     WARNING: You must delete the failed stack manually before
-#                     redeploying. Do not use in production.
-#   --environment     Environment name (dev|staging|prod, default: dev)
-#   --profile         AWS CLI profile to use (default: uses AWS_PROFILE env var or "default")
-#   --region          AWS region to deploy into (e.g. us-west-2, default: profile/env default)
-#   --suffix          Deployment suffix in yyyymmddHHMM format appended to all named
-#                     resources for uniqueness. Auto-generated from current UTC time
-#                     if not provided.
-#   --help            Display this help message
+#   --environment        Environment name (dev|staging|prod, default: dev)
+#                        Determines which parameters/<env>-parameters.json is read.
+#   --templates-bucket   Override TemplatesBucket from the parameter file.
+#   --lambda-bucket      Override LambdaCodeBucket from the parameter file.
+#   --dry-run            Create changeset without executing (for review).
+#                        Post-deployment steps are skipped in dry-run mode.
+#   --no-rollback        Disable automatic rollback on failure — stack is left in
+#                        its failed state so you can inspect events and resources
+#                        before deleting manually. Useful for debugging new deployments.
+#                        WARNING: You must delete the failed stack manually before
+#                        redeploying. Do not use in production.
+#   --profile            AWS CLI profile to use (default: uses AWS_PROFILE env var or "default")
+#   --region             AWS region to deploy into (e.g. us-west-2, default: profile/env default)
+#   --suffix             Deployment suffix in yyyymmddHHMM format appended to all named
+#                        resources for uniqueness. Auto-generated from current UTC time
+#                        if not provided.
+#   --help               Display this help message
+#
+# Bucket resolution order (highest priority wins):
+#   1. CLI flag (--templates-bucket / --lambda-bucket)
+#   2. Value in parameters/<env>-parameters.json  (TemplatesBucket / LambdaCodeBucket)
 #
 # Examples:
-#   # Deploy to dev environment using default profile
-#   ./deploy-stack.sh my-app-stack cfn-templates-dev lambda-code-dev
+#   # Deploy to dev — buckets read from dev-parameters.json
+#   ./deploy-stack.sh my-app-stack
 #
 #   # Deploy using a specific AWS CLI profile and region
-#   ./deploy-stack.sh my-app-stack cfn-templates-dev lambda-code-dev --profile my-profile --region us-west-2
+#   ./deploy-stack.sh my-app-stack --profile my-profile --region us-west-2
 #
 #   # Deploy to production with dry-run
-#   ./deploy-stack.sh my-app-stack cfn-templates-prod lambda-code-prod \
-#     --dry-run --environment prod --profile prod-profile --region us-west-2
+#   ./deploy-stack.sh my-app-stack --dry-run --environment prod --profile prod-profile --region us-west-2
+#
+#   # Override the templates bucket without editing the parameter file
+#   ./deploy-stack.sh my-app-stack --templates-bucket my-other-bucket
 #
 #   # Debug a failed deployment — keep stack in place for inspection
-#   ./deploy-stack.sh my-app-stack cfn-templates-dev lambda-code-dev \
-#     --no-rollback --environment dev --profile dev-profile
+#   ./deploy-stack.sh my-app-stack --no-rollback --environment dev --profile dev-profile
 #
 # Required IAM Permissions:
 #   CloudFormation:
@@ -125,41 +131,49 @@ log_error() {
 
 usage() {
     cat << EOF
-Usage: $0 <stack-name> <templates-bucket> <lambda-bucket> [options]
+Usage: $0 <stack-name> [options]
 
 Arguments:
-  stack-name         Name of the CloudFormation stack to create/update
-  templates-bucket   S3 bucket name for storing CloudFormation templates
-  lambda-bucket      S3 bucket name for storing Lambda deployment packages
+  stack-name           Name of the CloudFormation stack to create/update
 
 Options:
-  --dry-run         Create changeset without executing (for review).
-                    Post-deployment steps are skipped in dry-run mode.
-  --no-rollback     Disable automatic rollback on failure — stack is left in
-                    its failed state so you can inspect events and resources
-                    before deleting manually. Useful for debugging new deployments.
-                    WARNING: You must delete the failed stack manually before
-                    redeploying. Do not use in production.
-  --environment     Environment name (dev|staging|prod, default: dev)
-  --profile         AWS CLI profile to use (default: AWS_PROFILE env var or "default")
-  --region          AWS region to deploy into (e.g. us-west-2, default: profile/env default)
-  --suffix          Deployment suffix in yyyymmddHHMM format appended to all named
-                    resources for uniqueness. Auto-generated from current UTC time
-                    if not provided.
-  --help            Display this help message
+  --environment        Environment name (dev|staging|prod, default: dev).
+                       Determines which parameters/<env>-parameters.json is read.
+  --templates-bucket   Override TemplatesBucket from the parameter file.
+  --lambda-bucket      Override LambdaCodeBucket from the parameter file.
+  --dry-run            Create changeset without executing (for review).
+                       Post-deployment steps are skipped in dry-run mode.
+  --no-rollback        Disable automatic rollback on failure — stack is left in
+                       its failed state so you can inspect events and resources
+                       before deleting manually. Useful for debugging new deployments.
+                       WARNING: You must delete the failed stack manually before
+                       redeploying. Do not use in production.
+  --profile            AWS CLI profile to use (default: AWS_PROFILE env var or "default")
+  --region             AWS region to deploy into (e.g. us-west-2, default: profile/env default)
+  --suffix             Deployment suffix in yyyymmddHHMM format appended to all named
+                       resources for uniqueness. Auto-generated from current UTC time
+                       if not provided.
+  --help               Display this help message
+
+Bucket resolution order (highest priority wins):
+  1. CLI flag (--templates-bucket / --lambda-bucket)
+  2. Value in parameters/<env>-parameters.json  (TemplatesBucket / LambdaCodeBucket)
 
 Examples:
-  # Deploy to dev environment using default profile
-  $0 my-app-stack cfn-templates-dev lambda-code-dev
+  # Deploy to dev — buckets read from dev-parameters.json
+  $0 my-app-stack
 
   # Deploy using a specific AWS CLI profile and region
-  $0 my-app-stack cfn-templates-dev lambda-code-dev --profile my-profile --region us-west-2
+  $0 my-app-stack --profile my-profile --region us-west-2
 
   # Deploy to production with dry-run
-  $0 my-app-stack cfn-templates-prod lambda-code-prod --dry-run --environment prod --profile prod-profile --region us-west-2
+  $0 my-app-stack --dry-run --environment prod --profile prod-profile --region us-west-2
+
+  # Override the templates bucket without editing the parameter file
+  $0 my-app-stack --templates-bucket my-other-bucket
 
   # Debug a failed deployment — keep stack in place for inspection
-  $0 my-app-stack cfn-templates-dev lambda-code-dev --no-rollback --environment dev --profile dev-profile
+  $0 my-app-stack --no-rollback --environment dev --profile dev-profile
 
 EOF
     exit 1
@@ -170,16 +184,14 @@ EOF
 ################################################################################
 
 # Check minimum arguments
-if [ $# -lt 3 ]; then
+if [ $# -lt 1 ]; then
     log_error "Insufficient arguments provided"
     usage
 fi
 
-# Parse positional arguments
+# Parse positional argument
 STACK_NAME="$1"
-TEMPLATES_BUCKET="$2"
-LAMBDA_BUCKET="$3"
-shift 3
+shift
 
 # Parse optional arguments
 DRY_RUN=false
@@ -188,6 +200,8 @@ DEPLOY_SUFFIX=""
 NO_ROLLBACK=false
 AWS_PROFILE_ARG="${AWS_PROFILE:-}"  # Inherit from environment if set
 AWS_REGION_ARG="${AWS_DEFAULT_REGION:-}"  # Inherit from environment if set
+TEMPLATES_BUCKET_OVERRIDE=""
+LAMBDA_BUCKET_OVERRIDE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -201,6 +215,14 @@ while [ $# -gt 0 ]; do
             ;;
         --environment)
             ENVIRONMENT="$2"
+            shift 2
+            ;;
+        --templates-bucket)
+            TEMPLATES_BUCKET_OVERRIDE="$2"
+            shift 2
+            ;;
+        --lambda-bucket)
+            LAMBDA_BUCKET_OVERRIDE="$2"
             shift 2
             ;;
         --profile)
@@ -225,6 +247,50 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# Validate environment value early so we can resolve the parameter file path
+if [[ ! "$ENVIRONMENT" =~ ^(dev|staging|prod)$ ]]; then
+    log_error "Invalid environment: $ENVIRONMENT (must be dev, staging, or prod)"
+    exit 1
+fi
+
+# Resolve parameter file path — needed to read bucket names
+PARAMETER_FILE="${PARAMETERS_DIR}/${ENVIRONMENT}-parameters.json"
+if [ ! -f "${PARAMETER_FILE}" ]; then
+    log_error "Parameter file not found: ${PARAMETER_FILE}"
+    exit 1
+fi
+
+# Read TemplatesBucket and LambdaCodeBucket from parameter file,
+# then let CLI overrides take precedence if provided.
+_read_param() {
+    python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    params = json.load(f)
+for p in params:
+    if p.get('ParameterKey') == sys.argv[2]:
+        print(p.get('ParameterValue', ''))
+        sys.exit(0)
+print('')
+" "${PARAMETER_FILE}" "$1" 2>/dev/null
+}
+
+TEMPLATES_BUCKET_FROM_FILE=$(_read_param "TemplatesBucket")
+LAMBDA_BUCKET_FROM_FILE=$(_read_param "LambdaCodeBucket")
+
+# CLI override wins; fall back to parameter file value
+TEMPLATES_BUCKET="${TEMPLATES_BUCKET_OVERRIDE:-${TEMPLATES_BUCKET_FROM_FILE}}"
+LAMBDA_BUCKET="${LAMBDA_BUCKET_OVERRIDE:-${LAMBDA_BUCKET_FROM_FILE}}"
+
+if [ -z "${TEMPLATES_BUCKET}" ]; then
+    log_error "TemplatesBucket is not set. Add it to ${PARAMETER_FILE} or pass --templates-bucket."
+    exit 1
+fi
+if [ -z "${LAMBDA_BUCKET}" ]; then
+    log_error "LambdaCodeBucket is not set. Add it to ${PARAMETER_FILE} or pass --lambda-bucket."
+    exit 1
+fi
+
 # Generate deployment suffix if not provided (yyyymmddHHMM format)
 if [ -z "${DEPLOY_SUFFIX}" ]; then
     DEPLOY_SUFFIX=$(date -u +"%Y%m%d%H%M")
@@ -241,15 +307,6 @@ else
     PROFILE_DISPLAY="default"
 fi
 
-# Build the AWS CLI region flag
-if [ -n "${AWS_REGION_ARG:-}" ]; then
-    AWS_REGION_FLAG="--region ${AWS_REGION_ARG}"
-    REGION_DISPLAY="${AWS_REGION_ARG}"
-else
-    AWS_REGION_FLAG=""
-    REGION_DISPLAY="(profile default)"
-fi
-
 # Build the AWS CLI region flag — used in every aws command below
 # If no region specified, AWS CLI uses the profile's configured region
 if [ -n "${AWS_REGION_ARG}" ]; then
@@ -260,7 +317,7 @@ else
     REGION_DISPLAY="(profile default)"
 fi
 
-# Validate environment value
+# Display deployment configuration
 if [[ ! "$ENVIRONMENT" =~ ^(dev|staging|prod)$ ]]; then
     log_error "Invalid environment: $ENVIRONMENT (must be dev, staging, or prod)"
     exit 1
@@ -270,8 +327,9 @@ fi
 log_info "Deployment Configuration:"
 log_info "  Stack Name:        ${STACK_NAME}"
 log_info "  Environment:       ${ENVIRONMENT}"
-log_info "  Templates Bucket:  ${TEMPLATES_BUCKET}"
-log_info "  Lambda Bucket:     ${LAMBDA_BUCKET}"
+log_info "  Parameter File:    ${PARAMETER_FILE}"
+log_info "  Templates Bucket:  ${TEMPLATES_BUCKET}$([ -n "${TEMPLATES_BUCKET_OVERRIDE}" ] && echo " (CLI override)" || echo " (from parameter file)")"
+log_info "  Lambda Bucket:     ${LAMBDA_BUCKET}$([ -n "${LAMBDA_BUCKET_OVERRIDE}" ] && echo " (CLI override)" || echo " (from parameter file)")"
 log_info "  AWS Profile:       ${PROFILE_DISPLAY}"
 log_info "  AWS Region:        ${REGION_DISPLAY}"
 log_info "  Dry Run:           ${DRY_RUN}"
@@ -298,13 +356,6 @@ fi
 # Check if parent template exists
 if [ ! -f "${TEMPLATES_DIR}/parent.yaml" ]; then
     log_error "Parent template not found: ${TEMPLATES_DIR}/parent.yaml"
-    exit 1
-fi
-
-# Check if parameter file exists for the environment
-PARAMETER_FILE="${PARAMETERS_DIR}/${ENVIRONMENT}-parameters.json"
-if [ ! -f "${PARAMETER_FILE}" ]; then
-    log_error "Parameter file not found: ${PARAMETER_FILE}"
     exit 1
 fi
 
@@ -565,20 +616,20 @@ fi
 
 echo ""
 
-    # Post-deploy: re-upload OpenAPI schema with the actual API Gateway ID from the new stack,
-    # then refresh the Gateway Target to pick it up.
-    if [ "$DRY_RUN" = false ]; then
-        log_info "Updating OpenAPI schema with deployed API Gateway ID..."
-        ACTUAL_API_GW_ID=$(aws cloudformation describe-stacks \
-            --stack-name "${STACK_NAME}" \
-            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayId`].OutputValue' \
-            --output text --no-cli-pager \
-            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+# Post-deploy: re-upload OpenAPI schema with the actual API Gateway ID from the new stack,
+# then refresh the Gateway Target to pick it up.
+if [ "$DRY_RUN" = false ]; then
+    log_info "Updating OpenAPI schema with deployed API Gateway ID..."
+    ACTUAL_API_GW_ID=$(aws cloudformation describe-stacks \
+        --stack-name "${STACK_NAME}" \
+        --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayId`].OutputValue' \
+        --output text --no-cli-pager \
+        ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
 
-        if [ -n "${ACTUAL_API_GW_ID}" ] && [ "${ACTUAL_API_GW_ID}" != "None" ]; then
-            OPENAPI_SCHEMA_POST=$(mktemp /tmp/openapi-schema-post-XXXXXX.yaml)
-            # Use Python for precise replacement of only the apiId default value
-            python3 -c "
+    if [ -n "${ACTUAL_API_GW_ID}" ] && [ "${ACTUAL_API_GW_ID}" != "None" ]; then
+        OPENAPI_SCHEMA_POST=$(mktemp /tmp/openapi-schema-post-XXXXXX.yaml)
+        # Use Python for precise replacement of only the apiId default value
+        python3 -c "
 import re, sys
 with open('${PROJECT_ROOT}/docs/orders-api-openapi-3.0.yaml') as f:
     content = f.read()
@@ -587,91 +638,90 @@ fixed = re.sub(r'(apiId:\s*\n\s*default: )[a-z0-9]+', lambda m: m.group(1) + api
 with open(sys.argv[1], 'w') as f:
     f.write(fixed)
 " "${OPENAPI_SCHEMA_POST}"
-            if aws s3 cp "${OPENAPI_SCHEMA_POST}" "s3://${LAMBDA_BUCKET}/openapi-schema.yaml" \
-                --no-cli-pager ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG}; then
-                log_success "OpenAPI schema updated with API Gateway ID: ${ACTUAL_API_GW_ID}"
-            else
-                log_warning "Failed to update OpenAPI schema post-deploy"
-            fi
-            rm -f "${OPENAPI_SCHEMA_POST}"
+        if aws s3 cp "${OPENAPI_SCHEMA_POST}" "s3://${LAMBDA_BUCKET}/openapi-schema.yaml" \
+            --no-cli-pager ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG}; then
+            log_success "OpenAPI schema updated with API Gateway ID: ${ACTUAL_API_GW_ID}"
         else
-            log_warning "Could not retrieve API Gateway ID — OpenAPI schema may point to wrong account"
+            log_warning "Failed to update OpenAPI schema post-deploy"
         fi
+        rm -f "${OPENAPI_SCHEMA_POST}"
+    else
+        log_warning "Could not retrieve API Gateway ID — OpenAPI schema may point to wrong account"
     fi
+fi
 
-    # Post-deploy: refresh Gateway Target to pick up the updated OpenAPI schema
-    # The schema was uploaded with the correct API Gateway ID before deployment
-    if [ "$DRY_RUN" = false ]; then
-        log_info "Refreshing AgentCore Gateway Target with updated OpenAPI schema..."
-        GATEWAY_ID=$(aws cloudformation describe-stacks \
+# Post-deploy: refresh Gateway Target to pick up the updated OpenAPI schema
+if [ "$DRY_RUN" = false ]; then
+    log_info "Refreshing AgentCore Gateway Target with updated OpenAPI schema..."
+    GATEWAY_ID=$(aws cloudformation describe-stacks \
+        --stack-name "${STACK_NAME}" \
+        --query 'Stacks[0].Outputs[?OutputKey==`GatewayId`].OutputValue' \
+        --output text --no-cli-pager \
+        ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+
+    TARGET_ID=$(aws bedrock-agentcore-control list-gateway-targets \
+        --gateway-identifier "${GATEWAY_ID}" \
+        --no-cli-pager \
+        ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} \
+        --query 'items[0].targetId' \
+        --output text 2>/dev/null)
+
+    if [ -n "${GATEWAY_ID}" ] && [ -n "${TARGET_ID}" ] && [ "${TARGET_ID}" != "None" ]; then
+        OAUTH_PROVIDER_ARN=$(aws cloudformation describe-stacks \
             --stack-name "${STACK_NAME}" \
-            --query 'Stacks[0].Outputs[?OutputKey==`GatewayId`].OutputValue' \
+            --query 'Stacks[0].Outputs[?OutputKey==`CredentialProviderArn`].OutputValue' \
             --output text --no-cli-pager \
             ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
-        
-        TARGET_ID=$(aws bedrock-agentcore-control list-gateway-targets \
-            --gateway-identifier "${GATEWAY_ID}" \
-            --no-cli-pager \
-            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} \
-            --query 'items[0].targetId' \
-            --output text 2>/dev/null)
-        
-        if [ -n "${GATEWAY_ID}" ] && [ -n "${TARGET_ID}" ] && [ "${TARGET_ID}" != "None" ]; then
-            OAUTH_PROVIDER_ARN=$(aws cloudformation describe-stacks \
-                --stack-name "${STACK_NAME}" \
-                --query 'Stacks[0].Outputs[?OutputKey==`CredentialProviderArn`].OutputValue' \
-                --output text --no-cli-pager \
-                ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
-            OAUTH_CALLBACK_URL=$(aws cloudformation describe-stacks \
-                --stack-name "${STACK_NAME}" \
-                --query 'Stacks[0].Outputs[?OutputKey==`OAuthCallbackUrl`].OutputValue' \
-                --output text --no-cli-pager \
-                ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
-            TARGET_IDP_CLIENT_ID=$(python3 -c "
+        OAUTH_CALLBACK_URL=$(aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`OAuthCallbackUrl`].OutputValue' \
+            --output text --no-cli-pager \
+            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+        TARGET_IDP_CLIENT_ID=$(python3 -c "
 import json
 with open('${PARAMETERS_DIR}/${ENVIRONMENT}-parameters.json') as f:
     params = {p['ParameterKey']: p['ParameterValue'] for p in json.load(f) if 'ParameterKey' in p}
 print(params.get('TargetIdpClientId',''))
 " 2>/dev/null)
-            
-            aws bedrock-agentcore-control update-gateway-target \
-                --gateway-identifier "${GATEWAY_ID}" \
-                --target-id "${TARGET_ID}" \
-                --name "${ENVIRONMENT}-orders-api-target-${DEPLOY_SUFFIX}" \
-                --target-configuration "{\"mcp\":{\"openApiSchema\":{\"s3\":{\"uri\":\"s3://${LAMBDA_BUCKET}/openapi-schema.yaml\"}}}}" \
-                --credential-provider-configurations "[{\"credentialProviderType\":\"OAUTH\",\"credentialProvider\":{\"oauthCredentialProvider\":{\"providerArn\":\"${OAUTH_PROVIDER_ARN}\",\"grantType\":\"AUTHORIZATION_CODE\",\"defaultReturnUrl\":\"${OAUTH_CALLBACK_URL}\",\"scopes\":[\"${TARGET_IDP_CLIENT_ID}/.default\"]}}}]" \
-                --no-cli-pager \
-                ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>&1 \
-                && log_success "Gateway Target refreshed with updated OpenAPI schema" \
-                || log_warning "Could not refresh Gateway Target — check errors above"
-        else
-            log_warning "Could not find Gateway ID or Target ID — skipping Gateway Target refresh"
-        fi
-    fi
 
-    # Create gateway secret if it doesn't exist
-    if [ "$DRY_RUN" = false ]; then
-        GATEWAY_SECRET_NAME="${ENVIRONMENT}-gateway-secret-${DEPLOY_SUFFIX}"
-        GATEWAY_URL=$(aws cloudformation describe-stacks \
-            --stack-name "${STACK_NAME}" \
-            --query 'Stacks[0].Outputs[?OutputKey==`GatewayUrl`].OutputValue' \
-            --output text --no-cli-pager \
-            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
-        API_GW_ID=$(aws cloudformation describe-stacks \
-            --stack-name "${STACK_NAME}" \
-            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayId`].OutputValue' \
-            --output text --no-cli-pager \
-            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
-        
-        SECRET_EXISTS=$(aws secretsmanager describe-secret \
-            --secret-id "${GATEWAY_SECRET_NAME}" \
+        aws bedrock-agentcore-control update-gateway-target \
+            --gateway-identifier "${GATEWAY_ID}" \
+            --target-id "${TARGET_ID}" \
+            --name "${ENVIRONMENT}-orders-api-target-${DEPLOY_SUFFIX}" \
+            --target-configuration "{\"mcp\":{\"openApiSchema\":{\"s3\":{\"uri\":\"s3://${LAMBDA_BUCKET}/openapi-schema.yaml\"}}}}" \
+            --credential-provider-configurations "[{\"credentialProviderType\":\"OAUTH\",\"credentialProvider\":{\"oauthCredentialProvider\":{\"providerArn\":\"${OAUTH_PROVIDER_ARN}\",\"grantType\":\"AUTHORIZATION_CODE\",\"defaultReturnUrl\":\"${OAUTH_CALLBACK_URL}\",\"scopes\":[\"${TARGET_IDP_CLIENT_ID}/.default\"]}}}]" \
             --no-cli-pager \
-            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} \
-            --query 'Name' --output text 2>/dev/null || echo "")
-        
-        if [ -z "${SECRET_EXISTS}" ]; then
-            log_info "Creating gateway secret: ${GATEWAY_SECRET_NAME}..."
-            SECRET_VALUE=$(python3 -c "
+            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>&1 \
+            && log_success "Gateway Target refreshed with updated OpenAPI schema" \
+            || log_warning "Could not refresh Gateway Target — check errors above"
+    else
+        log_warning "Could not find Gateway ID or Target ID — skipping Gateway Target refresh"
+    fi
+fi
+
+# Create gateway secret if it doesn't exist
+if [ "$DRY_RUN" = false ]; then
+    GATEWAY_SECRET_NAME="${ENVIRONMENT}-gateway-secret-${DEPLOY_SUFFIX}"
+    GATEWAY_URL=$(aws cloudformation describe-stacks \
+        --stack-name "${STACK_NAME}" \
+        --query 'Stacks[0].Outputs[?OutputKey==`GatewayUrl`].OutputValue' \
+        --output text --no-cli-pager \
+        ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+    API_GW_ID=$(aws cloudformation describe-stacks \
+        --stack-name "${STACK_NAME}" \
+        --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayId`].OutputValue' \
+        --output text --no-cli-pager \
+        ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
+
+    SECRET_EXISTS=$(aws secretsmanager describe-secret \
+        --secret-id "${GATEWAY_SECRET_NAME}" \
+        --no-cli-pager \
+        ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} \
+        --query 'Name' --output text 2>/dev/null || echo "")
+
+    if [ -z "${SECRET_EXISTS}" ]; then
+        log_info "Creating gateway secret: ${GATEWAY_SECRET_NAME}..."
+        SECRET_VALUE=$(python3 -c "
 import json
 with open('${PARAMETERS_DIR}/${ENVIRONMENT}-parameters.json') as f:
     params = {p['ParameterKey']: p['ParameterValue'] for p in json.load(f) if 'ParameterKey' in p}
@@ -684,18 +734,18 @@ secret = {
 }
 print(json.dumps(secret))
 " 2>/dev/null)
-            aws secretsmanager create-secret \
-                --name "${GATEWAY_SECRET_NAME}" \
-                --description "AgentCore gateway credentials for ${ENVIRONMENT} environment" \
-                --secret-string "${SECRET_VALUE}" \
-                --no-cli-pager \
-                ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} > /dev/null 2>&1 \
-                && log_success "Gateway secret created: ${GATEWAY_SECRET_NAME}" \
-                || log_warning "Could not create gateway secret — create manually"
-        else
-            log_info "Gateway secret already exists: ${GATEWAY_SECRET_NAME}"
-        fi
+        aws secretsmanager create-secret \
+            --name "${GATEWAY_SECRET_NAME}" \
+            --description "AgentCore gateway credentials for ${ENVIRONMENT} environment" \
+            --secret-string "${SECRET_VALUE}" \
+            --no-cli-pager \
+            ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} > /dev/null 2>&1 \
+            && log_success "Gateway secret created: ${GATEWAY_SECRET_NAME}" \
+            || log_warning "Could not create gateway secret — create manually"
+    else
+        log_info "Gateway secret already exists: ${GATEWAY_SECRET_NAME}"
     fi
+fi
 
 ################################################################################
 # Warm Up AgentCore Runtime
@@ -797,9 +847,11 @@ if [ "$DRY_RUN" = false ]; then
         # WS_SIGN_ENDPOINT is intentionally empty — no WebSocket signer in this stack
         export WS_SIGN_ENDPOINT=""
 
-        # Collect MSAL env vars interactively if not already set in the environment.
-        # These are required by build-config.js to generate config.generated.js.
-        # The CloudFront domain is used as the default redirect URI suggestion.
+        # Derive MSAL configuration automatically from parameter file and stack outputs.
+        # GatewayIdpClientId is the MSAL client ID (the app the frontend authenticates as).
+        # MSAL_AUTHORITY is built from the tenant ID in the parameter file.
+        # REDIRECT_URI is the CloudFront domain from stack outputs.
+        # All three can be overridden by setting the env vars before running the script.
         CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks \
             --stack-name "${STACK_NAME}" \
             --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDomainName`].OutputValue' \
@@ -807,9 +859,15 @@ if [ "$DRY_RUN" = false ]; then
             ${AWS_PROFILE_FLAG} ${AWS_REGION_FLAG} 2>/dev/null)
 
         if [ -z "${MSAL_CLIENT_ID:-}" ]; then
-            echo ""
-            log_info "Frontend configuration requires Azure AD (MSAL) settings."
-            read -r -p "  Enter MSAL_CLIENT_ID (Azure App Registration Client ID): " MSAL_CLIENT_ID
+            MSAL_CLIENT_ID=$(python3 -c "
+import json
+with open('${PARAMETERS_DIR}/${ENVIRONMENT}-parameters.json') as f:
+    params = json.load(f)
+for p in params:
+    if p.get('ParameterKey') == 'GatewayIdpClientId':
+        print(p['ParameterValue'])
+        break
+" 2>/dev/null || echo "")
             export MSAL_CLIENT_ID
         fi
 
@@ -823,16 +881,12 @@ for p in params:
         print(p['ParameterValue'])
         break
 " 2>/dev/null || echo "")
-            DEFAULT_AUTHORITY="https://login.microsoftonline.com/${TENANT_ID}"
-            read -r -p "  Enter MSAL_AUTHORITY [${DEFAULT_AUTHORITY}]: " INPUT_AUTHORITY
-            MSAL_AUTHORITY="${INPUT_AUTHORITY:-${DEFAULT_AUTHORITY}}"
+            MSAL_AUTHORITY="https://login.microsoftonline.com/${TENANT_ID}"
             export MSAL_AUTHORITY
         fi
 
         if [ -z "${REDIRECT_URI:-}" ]; then
-            DEFAULT_REDIRECT="https://${CLOUDFRONT_DOMAIN}"
-            read -r -p "  Enter REDIRECT_URI [${DEFAULT_REDIRECT}]: " INPUT_REDIRECT
-            REDIRECT_URI="${INPUT_REDIRECT:-${DEFAULT_REDIRECT}}"
+            REDIRECT_URI="https://${CLOUDFRONT_DOMAIN}"
             export REDIRECT_URI
         fi
 

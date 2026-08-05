@@ -501,6 +501,36 @@ Resources:
               Uri: !Sub 's3://${S3Bucket}/openapi-schema.yaml'
 
   # --------------------------------------------------------------------------
+  # GATEWAY SECRET — stores Gateway credentials for the AgentCore Runtime
+  # Created here so the runtime has access to the Gateway URL and client
+  # credentials without any post-deployment manual steps.
+  # DependsOn: AgentCoreGateway (needs GatewayUrl)
+  # --------------------------------------------------------------------------
+
+  GatewaySecret:
+    Type: AWS::SecretsManager::Secret
+    DependsOn: AgentCoreGateway
+    Properties:
+      Name: !Sub '${Environment}-gateway-secret-${DeploymentSuffix}'
+      Description: !Sub 'AgentCore gateway credentials for ${Environment} environment'
+      SecretString: !Sub
+        - |
+          {
+            "tenant_id": "${TargetIdpTenantId}",
+            "client_id": "${GatewayIdpClientId}",
+            "client_secret": "${TargetIdpClientSecret}",
+            "gateway_mcp_url": "${GatewayUrl}"
+          }
+        - GatewayUrl: !GetAtt AgentCoreGateway.GatewayUrl
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Project
+          Value: AgentCore
+
+  # --------------------------------------------------------------------------
   # AGENTCORE RUNTIME — depends on Gateway, GatewayTarget, OAuthCallbackLambda
   # --------------------------------------------------------------------------
 
@@ -509,6 +539,7 @@ Resources:
     DependsOn:
       - AgentCoreGateway
       - GatewayTarget
+      - GatewaySecret
     Properties:
       # AgentRuntimeName pattern: ^[a-zA-Z][a-zA-Z0-9_]{0,47}$ — no hyphens, max 48 chars
       # With suffix: dev_order_agent_runtime_202605051633 = 38 chars ✅

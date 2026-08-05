@@ -146,7 +146,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${Environment}-get-orders-${DeploymentSuffix}'
-      Runtime: python3.9
+      Runtime: python3.12
       Handler: get_orders.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 30
@@ -169,7 +169,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${Environment}-create-order-${DeploymentSuffix}'
-      Runtime: python3.9
+      Runtime: python3.12
       Handler: create_order.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 30
@@ -192,7 +192,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${Environment}-update-order-${DeploymentSuffix}'
-      Runtime: python3.9
+      Runtime: python3.12
       Handler: update_order.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 30
@@ -261,7 +261,7 @@ Resources:
     DependsOn: AuthorizerAuditLogGroup
     Properties:
       FunctionName: !Sub '${Environment}-orders-authorizer-${DeploymentSuffix}'
-      Runtime: python3.9
+      Runtime: python3.12
       Handler: authorizer.lambda_handler
       Role: !GetAtt AuthorizerExecutionRole.Arn
       Timeout: 10  # Short timeout for authorization checks
