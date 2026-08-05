@@ -1,3 +1,5 @@
 bedrock-agentcore
 strands-agents
 strands-agents-tools
+aws-opentelemetry-distro
+opentelemetry-propagator-aws-xray

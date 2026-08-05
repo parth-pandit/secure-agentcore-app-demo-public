@@ -396,6 +396,12 @@ Outputs:
     Value: !GetAtt AgentCoreAppStack.Outputs.CredentialProviderArn
     Export:
       Name: !Sub '${AWS::StackName}-CredentialProviderArn'
+
+  IdentityCallbackUrl:
+    Description: AgentCore Identity OAuth2 Callback URL (register this in Azure Entra ID app registration as a redirect URI)
+    Value: !GetAtt AgentCoreAppStack.Outputs.CallbackUrl
+    Export:
+      Name: !Sub '${AWS::StackName}-IdentityCallbackUrl'
   
   # ============================================================================
   # FRONTEND STACK OUTPUTS
